@@ -10,13 +10,17 @@
   form { display: grid; gap: 8px; max-width: 420px; }
   input, select, button { font: inherit; padding: 6px 10px; }
   button { cursor: pointer; }
+  .predict { border: 2px dashed #c4471b; border-radius: 8px; padding: 12px 18px; margin: 1em 0; }
+  .predict h3 { margin: 0 0 4px; font-size: 1rem; color: #c4471b; }
+  details { margin-top: 8px; }
+  summary { cursor: pointer; font-weight: bold; color: #1f5fa8; }
 </style>
 </head>
 <body>
 <main>
   <h1>フォームのページ</h1>
-  <p class="lead">同じ内容を、GET と POST の 2 通りの方法でサーバに送ってみます。<br>
-  ※ ここに入力した内容はどこにも保存されません。個人情報は入れないでください。</p>
+  <p class="lead">同じ内容を、GET と POST の方法でサーバに送ってみます。<br>
+  ※ (A)(B) はこのサイトのサーバに、(C) は外部のテスト用サーバに送ります。どれも個人情報は入れないでください。</p>
 
   <h2>(A) GET で送る</h2>
   <form action="result.html" method="get">
@@ -35,6 +39,20 @@
   </div>
 
   <h2>(B) POST で送る</h2>
+  <div class="predict">
+    <h3>送信する前に予想してみよう</h3>
+    <p>このサイトを置いている GitHub Pages は、置いてあるファイルを渡すだけのサーバです。<br>
+    そこへ POST でデータを送ると、何が起きるでしょう？</p>
+    <details>
+      <summary>予想の答えと理由を見る</summary>
+      <ul>
+        <li><strong>何が起きる？</strong> エラーになります。ステータスコードは <strong>405（Method Not Allowed）</strong>。画面には「このページは動作していません」などと表示されます。</li>
+        <li><strong>なぜ？</strong> POST は「このデータを受け取って、何か処理してください」という頼み方です。でも GitHub Pages には、送られたデータを受け取って処理するプログラムがありません。そこで「その送り方（メソッド）は受け付けていません」と断ります。</li>
+        <li><strong>見どころ：</strong> URL に <code>?</code> は付きません。それでも Network タブで result.html の行の「Payload（ペイロード）」を開くと、送ったデータが入っています。データはちゃんと届いていて、サーバに断られただけです。</li>
+      </ul>
+      <p>※ エラー画面が出たあとに再読み込みすると、もう一度送信するか確認されます。再読み込みはせず「戻る」で戻りましょう。</p>
+    </details>
+  </div>
   <form action="result.html" method="post">
     <label>検索したい言葉 <input type="text" name="q" value="ネットワーク"></label>
     <label>言語
@@ -48,7 +66,41 @@
       <li>送信したあと、URL に <code>?</code> は付いた？</li>
       <li>Status Code は何番？ その番号はどういう意味？</li>
       <li>ヒント: このサイトを置いているサーバ（GitHub Pages）は、ファイルを渡すだけのサーバです</li>
+      <li>Network タブで result.html の行をクリックし、「Payload（ペイロード）」タブを開くと、送ったデータはどこに入っている？</li>
     </ul>
+  </div>
+
+  <h2>(C) データを処理してくれるサーバに POST で送る</h2>
+  <p>送り先を、受け取ったデータをそのまま返してくれるテスト用のサーバ（httpbin.org）にしたフォームです。</p>
+  <div class="predict">
+    <h3>送信する前に予想してみよう</h3>
+    <p>(B) と同じデータを、同じ POST で送ります。違うのは送り先のサーバだけです。<br>
+    今度は何が起きるでしょう？</p>
+    <details>
+      <summary>予想の答えと理由を見る</summary>
+      <ul>
+        <li><strong>何が起きる？</strong> 成功します。ステータスコードは <strong>200（OK）</strong>。画面には、送った内容が <code>"form"</code> の欄に入った文字の一覧（JSON という形式）が表示されます。</li>
+        <li><strong>なぜ？</strong> httpbin.org では、POST で送られたデータを受け取って処理するプログラムが動いています（ここでの処理は「受け取った内容をそのまま返す」こと）。</li>
+        <li><strong>見どころ：</strong> 同じデータ・同じ POST でも、(B) は 405、(C) は 200。結果は「受け取る側のサーバが、その頼み方に対応しているか」で決まります。</li>
+      </ul>
+    </details>
+  </div>
+  <form action="https://httpbin.org/post" method="post">
+    <label>検索したい言葉 <input type="text" name="q" value="ネットワーク"></label>
+    <label>言語
+      <select name="lang"><option value="ja">日本語 (ja)</option><option value="en">英語 (en)</option></select>
+    </label>
+    <button type="submit">httpbin.org に POST で送信</button>
+    <button type="submit" formaction="https://httpbingo.org/post">（予備）httpbingo.org に POST で送信</button>
+  </form>
+  <div class="panel">
+    <h3>確かめよう</h3>
+    <ul>
+      <li>Status Code は何番？ (B) とはなぜ違う？</li>
+      <li>返ってきた画面の <code>"form"</code> の部分に、送った内容が入っている？</li>
+      <li>httpbin.org が動いていないときは、予備のボタンを使う</li>
+    </ul>
+    <p><strong>注意：</strong>返ってきた画面の <code>"origin"</code> には、あなたのインターネット上の住所（IP アドレス）が表示されます。この画面を SNS に載せたり、人に見せたりしないこと。</p>
   </div>
   <p><a href="./">← 目次にもどる</a></p>
 </main>

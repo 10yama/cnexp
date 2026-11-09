@@ -15,9 +15,13 @@
   <div class="panel">
     <h3>はじめに</h3>
     <ol>
-      <li>Chrome で DevTools を開く（Windows: <code>F12</code> または <code>Ctrl+Shift+I</code>／Mac: <code>⌘+Option+I</code>）</li>
+      <li>Chrome の<strong>シークレットウィンドウ</strong>でこのページを開く（Windows: <code>Ctrl+Shift+N</code>／Mac: <code>⌘+Shift+N</code>）<br>
+        ※ 拡張機能（プラグイン）が動いていると、関係ないリクエストが混ざって数が合わなくなります。シークレットウィンドウなら拡張機能はふつう止まっています</li>
+      <li>DevTools を開く（Windows: <code>F12</code> または <code>Ctrl+Shift+I</code>／Mac: <code>⌘+Option+I</code>）</li>
       <li>「Network（ネットワーク）」タブを選ぶ</li>
       <li><strong>DevTools を開いたまま</strong>、下のリンクをクリックする</li>
+      <li>ページが開いたら<strong>スーパーリロード</strong>（Windows: <code>Ctrl+Shift+R</code>／Mac: <code>⌘+Shift+R</code>）してから観察する<br>
+        ※ ふつうの再読み込みだと、前に受け取ったファイルを手元のコピー（キャッシュ）で済ませるため、Size 欄が「(memory cache)」になったり、ステータスが 304 になったりします</li>
       <li>列の見出しを右クリックすると「Protocol」「Remote Address」「Domain」などの列を追加できる</li>
     </ol>
   </div>
