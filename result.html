@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>送信結果（GET）</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<main>
+  <h1>送信結果（GET）</h1>
+  <p class="lead">GET で送ったデータは、URL の <code>?</code> のうしろ（クエリ）に入っています。</p>
+
+  <div class="panel">
+    <h3>今の URL（実際に送られた形）</h3>
+    <p><code id="url-raw" style="word-break: break-all;"></code></p>
+    <h3>読める形に戻すと</h3>
+    <p><code id="url"></code></p>
+    <p>日本語などの文字は、URL の中では <code>%E3%83%8D</code> のような記号の列に変換（URL エンコード）されて送られます。</p>
+  </div>
+  <div class="panel">
+    <h3>クエリを分解すると</h3>
+    <ul id="params"></ul>
+  </div>
+  <p>URL に入るということは、ブラウザの履歴やサーバの記録（ログ）にも残るということ。<br>
+  だから、パスワードのような大事な情報は GET では送りません。</p>
+  <p><a href="04-form.html">← フォームにもどる</a></p>
+</main>
+<script>
+  document.getElementById('url-raw').textContent = location.href;
+  document.getElementById('url').textContent = decodeURIComponent(location.href);
+  var list = document.getElementById('params');
+  var p = new URLSearchParams(location.search);
+  var n = 0;
+  p.forEach(function (value, key) {
+    var li = document.createElement('li');
+    li.textContent = key + ' は「' + value + '」';
+    list.appendChild(li); n++;
+  });
+  if (n === 0) {
+    var li = document.createElement('li');
+    li.textContent = '（クエリはありません）';
+    list.appendChild(li);
+  }
+</script>
+</body>
+</html>

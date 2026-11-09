@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ネットワーク観察ラボ</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<main>
+  <h1>ネットワーク観察ラボ</h1>
+  <p class="lead">Chrome のデベロッパーツール（DevTools）で、Web の通信を観察するための練習用ページです。</p>
+
+  <div class="panel">
+    <h3>はじめに</h3>
+    <ol>
+      <li>Chrome で DevTools を開く（Windows: <code>F12</code> または <code>Ctrl+Shift+I</code>／Mac: <code>⌘+Option+I</code>）</li>
+      <li>「Network（ネットワーク）」タブを選ぶ</li>
+      <li><strong>DevTools を開いたまま</strong>、下のリンクをクリックする</li>
+      <li>列の見出しを右クリックすると「Protocol」「Remote Address」「Domain」などの列を追加できる</li>
+    </ol>
+  </div>
+
+  <h2>観察する実験ページ</h2>
+  <ol>
+    <li><a href="01-minimal.html">いちばん小さいページ</a> — HTML ファイル 1 つだけ</li>
+    <li><a href="02-parts.html">部品でできたページ</a> — HTML ＋ CSS ＋ 画像 ＋ JavaScript</li>
+    <li><a href="03-big.html">大きな写真のページ</a> — 約 2.8MB の写真を 1 枚</li>
+    <li><a href="04-form.html">フォームのページ</a> — GET と POST で送ってみる</li>
+    <li><a href="this-page-does-not-exist.html">存在しないページへのリンク</a> — ステータスコードを見てみよう</li>
+  </ol>
+
+  <h2>比べてみるほかのサイト</h2>
+  <ul>
+    <li><a href="http://httpforever.com/">http://httpforever.com/</a> — わざと https にしていない（暗号化しない）サイト。Chrome が「保護されていない通信」と警告を出すので、内容を確認して「サイトに移動」で進む</li>
+    <li><a href="https://example.com/">https://example.com/</a> — 説明用に予約されたドメインの、とても小さなページ</li>
+    <li><a href="https://www.kaetsu.ac.jp/">https://www.kaetsu.ac.jp/</a> — ふつうの大学サイト。リクエストの数を比べてみよう</li>
+  </ul>
+
+  <footer>コンピュータネットワーク 演習用ページ</footer>
+</main>
+</body>
+</html>

@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>フォームのページ</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="css/style.css">
+<style>
+  form { display: grid; gap: 8px; max-width: 420px; }
+  input, select, button { font: inherit; padding: 6px 10px; }
+  button { cursor: pointer; }
+</style>
+</head>
+<body>
+<main>
+  <h1>フォームのページ</h1>
+  <p class="lead">同じ内容を、GET と POST の 2 通りの方法でサーバに送ってみます。<br>
+  ※ ここに入力した内容はどこにも保存されません。個人情報は入れないでください。</p>
+
+  <h2>(A) GET で送る</h2>
+  <form action="result.html" method="get">
+    <label>検索したい言葉 <input type="text" name="q" value="ネットワーク"></label>
+    <label>言語
+      <select name="lang"><option value="ja">日本語 (ja)</option><option value="en">英語 (en)</option></select>
+    </label>
+    <button type="submit">GET で送信</button>
+  </form>
+  <div class="panel">
+    <h3>確かめよう</h3>
+    <ul>
+      <li>送信したあと、アドレスバーの URL はどうなった？（<code>?</code> のうしろに注目）</li>
+      <li>Network タブで、Request Method と Status Code は？</li>
+    </ul>
+  </div>
+
+  <h2>(B) POST で送る</h2>
+  <form action="result.html" method="post">
+    <label>検索したい言葉 <input type="text" name="q" value="ネットワーク"></label>
+    <label>言語
+      <select name="lang"><option value="ja">日本語 (ja)</option><option value="en">英語 (en)</option></select>
+    </label>
+    <button type="submit">POST で送信</button>
+  </form>
+  <div class="panel">
+    <h3>確かめよう</h3>
+    <ul>
+      <li>送信したあと、URL に <code>?</code> は付いた？</li>
+      <li>Status Code は何番？ その番号はどういう意味？</li>
+      <li>ヒント: このサイトを置いているサーバ（GitHub Pages）は、ファイルを渡すだけのサーバです</li>
+    </ul>
+  </div>
+  <p><a href="./">← 目次にもどる</a></p>
+</main>
+</body>
+</html>
