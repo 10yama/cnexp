@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>回線交換アニメーション</title>
+<style>
+  html, body { margin: 0; background: #ffffff; }
+  body { display: flex; justify-content: center; align-items: center; min-height: 100vh; }
+  svg { width: 100vw; max-width: 1440px; height: auto; display: block;
+        font-family: "Noto Sans CJK JP", "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif; }
+</style>
+</head>
+<body>
+<svg id="stage" viewBox="0 0 1440 900" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <g id="pc">
+      <rect x="-56" y="-46" width="112" height="76" rx="8" fill="#5c5852"/>
+      <rect x="-48" y="-38" width="96" height="60" rx="4" fill="#eef2f6"/>
+      <rect x="-10" y="30" width="20" height="14" fill="#5c5852"/>
+      <rect x="-34" y="44" width="68" height="8" rx="3" fill="#5c5852"/>
+    </g>
+    <g id="router">
+      <circle r="44" fill="#696464"/>
+      <g stroke="#ffffff" stroke-width="5" stroke-linecap="round" fill="none">
+        <path d="M-24 -8 H-6 M-14 -16 L-6 -8 L-14 0"/>
+        <path d="M24 8 H6 M14 0 L6 8 L14 16"/>
+        <path d="M8 -24 V-6 M0 -14 L8 -6 L16 -14" transform="rotate(180 8 -15)"/>
+        <path d="M-8 24 V6 M-16 14 L-8 6 L0 14" transform="rotate(180 -8 15)"/>
+      </g>
+    </g>
+  </defs>
+
+  <text x="720" y="70" text-anchor="middle" font-size="40" font-weight="700" fill="#3a3a3a">回線交換：通信している間、回線を独り占めする</text>
+
+  <!-- base links -->
+  <g stroke="#c9c2b8" stroke-width="10" stroke-linecap="round">
+    <line x1="230" y1="270" x2="480" y2="450"/>
+    <line x1="230" y1="630" x2="480" y2="450"/>
+    <line x1="960" y1="450" x2="1210" y2="270"/>
+    <line x1="960" y1="450" x2="1210" y2="630"/>
+  </g>
+  <line x1="480" y1="450" x2="960" y2="450" stroke="#a89f94" stroke-width="18" stroke-linecap="round"/>
+
+  <!-- circuits (reserved path + data stream) -->
+  <path id="circA" d="M230 270 L480 450 L960 450 L1210 270" fill="none" stroke="#f2b28f" stroke-width="26" stroke-linecap="round" stroke-linejoin="round" opacity="0"/>
+  <path id="strA"  d="M230 270 L480 450 L960 450 L1210 270" fill="none" stroke="#D34817" stroke-width="10" stroke-dasharray="34 18" stroke-linejoin="round" opacity="0"/>
+  <path id="circB" d="M230 630 L480 450 L960 450 L1210 630" fill="none" stroke="#a9c1de" stroke-width="26" stroke-linecap="round" stroke-linejoin="round" opacity="0"/>
+  <path id="strB"  d="M230 630 L480 450 L960 450 L1210 630" fill="none" stroke="#2F639C" stroke-width="10" stroke-dasharray="34 18" stroke-linejoin="round" opacity="0"/>
+
+  <!-- nodes -->
+  <use href="#pc" x="150" y="270"/><text x="150" y="350" text-anchor="middle" font-size="26" font-weight="700" fill="#D34817">A</text>
+  <use href="#pc" x="150" y="630"/><text x="150" y="710" text-anchor="middle" font-size="26" font-weight="700" fill="#2F639C">B</text>
+  <use href="#pc" x="1290" y="270"/><text x="1290" y="350" text-anchor="middle" font-size="26" font-weight="700" fill="#D34817">C</text>
+  <use href="#pc" x="1290" y="630"/><text x="1290" y="710" text-anchor="middle" font-size="26" font-weight="700" fill="#2F639C">D</text>
+  <text x="150" y="160" text-anchor="middle" font-size="20" fill="#6b6560">送信元</text>
+  <text x="1290" y="160" text-anchor="middle" font-size="20" fill="#6b6560">受信先</text>
+  <use href="#router" x="480" y="450"/>
+  <use href="#router" x="960" y="450"/>
+
+  <!-- status label on the shared line -->
+  <g id="useA" opacity="0">
+    <rect x="590" y="486" width="260" height="44" rx="22" fill="#D34817"/>
+    <text x="720" y="516" text-anchor="middle" font-size="22" fill="#fff">A–C 専用で使用中</text>
+  </g>
+  <g id="useB" opacity="0">
+    <rect x="590" y="486" width="260" height="44" rx="22" fill="#2F639C"/>
+    <text x="720" y="516" text-anchor="middle" font-size="22" fill="#fff">B–D 専用で使用中</text>
+  </g>
+
+  <!-- B waiting -->
+  <g id="waitB" opacity="0">
+    <rect x="205" y="680" width="270" height="44" rx="22" fill="#3a3a3a"/>
+    <text x="340" y="710" text-anchor="middle" font-size="21" fill="#fff">回線が空くまで待つ…</text>
+  </g>
+
+  <!-- data blocks -->
+  <g id="dataA"><rect x="-56" y="-32" width="112" height="64" rx="8" fill="#D34817"/><text y="9" text-anchor="middle" font-size="24" font-weight="700" fill="#fff">データ</text></g>
+  <g id="dataB"><rect x="-56" y="-32" width="112" height="64" rx="8" fill="#2F639C"/><text y="9" text-anchor="middle" font-size="24" font-weight="700" fill="#fff">データ</text></g>
+  <g id="dataC"><rect x="-56" y="-32" width="112" height="64" rx="8" fill="#D34817"/><text y="9" text-anchor="middle" font-size="24" font-weight="700" fill="#fff">データ</text></g>
+  <g id="dataD"><rect x="-56" y="-32" width="112" height="64" rx="8" fill="#2F639C"/><text y="9" text-anchor="middle" font-size="24" font-weight="700" fill="#fff">データ</text></g>
+
+  <g id="steps" font-size="26"></g>
+</svg>
+
+<script>
+(function () {
+  const NS = 'http://www.w3.org/2000/svg';
+  const DUR = 12;
+  const $ = id => document.getElementById(id);
+  const c01 = x => Math.max(0, Math.min(1, x));
+  const ease = x => { x = c01(x); return x * x * (3 - 2 * x); };
+  const win = (t, a, b, f = 0.3) => c01((t - a) / f) * (1 - c01((t - b) / f));   // fade in at a, out at b
+  const LEN = $('circA').getTotalLength();
+
+  const steps = ['① A–C の回線をつなぐ', '② A が回線を独り占め（B は待つ）', '③ 空いたら B–D をつなぐ'];
+  const stepWin = [[0.8, 2.2], [2.2, 5.8], [5.8, 10.6]];
+  const widths = [300, 470, 330], xs = [130, 470, 980];
+  const stepEls = steps.map((s, i) => {
+    const g = document.createElementNS(NS, 'g'); g.setAttribute('transform', `translate(${xs[i]},830)`); $('steps').appendChild(g);
+    const r = document.createElementNS(NS, 'rect'); Object.entries({ x: 0, y: -34, width: widths[i], height: 52, rx: 26 }).forEach(([k, v]) => r.setAttribute(k, v)); g.appendChild(r);
+    const t = document.createElementNS(NS, 'text'); t.setAttribute('x', widths[i] / 2); t.setAttribute('y', 1); t.setAttribute('text-anchor', 'middle'); t.textContent = s; g.appendChild(t);
+    return { r, t };
+  });
+
+  function place(id, x, y, o, s = 1) { const e = $(id); e.setAttribute('transform', `translate(${x},${y}) scale(${s})`); e.setAttribute('opacity', o); }
+
+  window.render = function (t) {
+    t = ((t % DUR) + DUR) % DUR;
+    const fade = 1 - c01((t - 11.3) / 0.6);
+    const fin = c01(t / 0.4);
+
+    // A–C circuit: connect 0.8–2.0, stream 2.2–5.4, release 5.5–6.0
+    const cA = ease((t - 0.8) / 1.2), relA = 1 - c01((t - 5.5) / 0.5);
+    const eA = $('circA'); eA.setAttribute('stroke-dasharray', LEN); eA.setAttribute('stroke-dashoffset', LEN * (1 - cA)); eA.setAttribute('opacity', (t >= 0.8 ? 1 : 0) * relA);
+    const sA = $('strA'); sA.setAttribute('stroke-dashoffset', -t * 160); sA.setAttribute('opacity', win(t, 2.2, 5.4));
+    $('useA').setAttribute('opacity', win(t, 1.8, 5.6));
+
+    // B waits 2.4–6.0
+    $('waitB').setAttribute('opacity', win(t, 2.4, 6.0));
+
+    // B–D circuit: connect 6.0–7.2, stream 7.4–10.2, release 10.3–10.8
+    const cB = ease((t - 6.0) / 1.2), relB = 1 - c01((t - 10.3) / 0.5);
+    const eB = $('circB'); eB.setAttribute('stroke-dasharray', LEN); eB.setAttribute('stroke-dashoffset', LEN * (1 - cB)); eB.setAttribute('opacity', (t >= 6.0 ? 1 : 0) * relB);
+    const sB = $('strB'); sB.setAttribute('stroke-dashoffset', -t * 160); sB.setAttribute('opacity', win(t, 7.4, 10.2));
+    $('useB').setAttribute('opacity', win(t, 7.0, 10.4));
+
+    // data blocks: source shrinks while sending, destination grows
+    const pA = c01((t - 2.4) / 2.8), pB = c01((t - 7.6) / 2.4);
+    const back = c01((t - 11.4) / 0.6);              // sources reappear for the loop
+    place('dataA', 255, 270, Math.max((1 - pA) * fin, back), 0.5 + 0.5 * Math.max(1 - pA, back));
+    place('dataB', 255, 630, Math.max((1 - pB) * fin, back), 0.5 + 0.5 * Math.max(1 - pB, back));
+    place('dataC', 1165, 270, pA * fade, 0.5 + 0.5 * pA);
+    place('dataD', 1165, 630, pB * fade, 0.5 + 0.5 * pB);
+
+    stepEls.forEach((e, i) => {
+      const [a, b] = stepWin[i];
+      const on = win(t, a, b) > 0.5, done = t >= b && t < 11.3;
+      e.r.setAttribute('fill', on ? '#3a3a3a' : (done ? '#e7e3dd' : '#f1eee9'));
+      e.t.setAttribute('fill', on ? '#ffffff' : (done ? '#5c5852' : '#9a938b'));
+      e.t.setAttribute('font-weight', on ? 700 : 400);
+    });
+  };
+
+  window.DURATION = DUR;
+  if (!/[?&]static/.test(location.search)) {
+    const start = performance.now();
+    (function loop(now) { render((now - start) / 1000); requestAnimationFrame(loop); })(start);
+  } else { render(0); }
+})();
+</script>
+</body>
+</html>

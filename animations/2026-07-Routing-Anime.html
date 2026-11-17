@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>ルーティング鉄道アニメーション</title>
+<style>
+  html, body { margin: 0; background: #ffffff; }
+  body { display: flex; flex-direction: column; justify-content: center; align-items: center; min-height: 100vh; }
+  svg { width: 100vw; max-width: 1440px; height: auto; display: block;
+        font-family: "Noto Sans CJK JP", "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif; }
+  #ctrl { display: flex; gap: 8px; align-items: center; margin: 6px 0 10px;
+          font-family: "Hiragino Sans", "Meiryo", sans-serif; font-size: 14px; color: #6b6560; }
+  #ctrl button { font-size: 14px; padding: 4px 12px; border: 1px solid #c9c2b8; background: #f7f5f2;
+                 border-radius: 6px; cursor: pointer; color: #3a3a3a; }
+  #ctrl button:hover { background: #efe9e2; }
+  .hide { display: none !important; }
+</style>
+</head>
+<body>
+<svg id="stage" viewBox="0 0 1440 900" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="9" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <!-- title -->
+  <text x="40" y="62" font-size="36" font-weight="700" fill="#3a3a3a">IPルーティング：駅（ルータ）ごとに「次の乗り換え先」を決める</text>
+  <text x="40" y="100" font-size="20" fill="#6b6560">お客さん＝パケット　／　路線＝LANセグメント　／　乗り換え駅＝ルータ</text>
+  <g id="scene-chip" transform="translate(1250,62)">
+    <rect id="scene-chip-bg" x="0" y="-30" width="160" height="44" rx="22" fill="#D34817"/>
+    <text id="scene-chip-t" x="80" y="0" text-anchor="middle" font-size="22" font-weight="700" fill="#fff">通常時</text>
+  </g>
+
+  <g id="map"></g>
+  <g id="overlay"></g>
+  <g id="panel"></g>
+  <g id="packet-layer"></g>
+  <g id="caption"></g>
+</svg>
+<div id="ctrl">
+  <button id="b-prev">◀ 前のステップ</button>
+  <button id="b-play">一時停止</button>
+  <button id="b-next">次のステップ ▶</button>
+  <span id="b-info"></span>
+</div>
+
+<script>
+(function () {
+  const NS = 'http://www.w3.org/2000/svg';
+  const RED = '#D34817', RED_D = '#8f2f0e';
+  const C = { seibu: '#d9b100', yama: '#2e9d4a', tozai: '#1a9ad6', lan: '#8a837b' };
+  const DUR = 46;
+  const params = new URLSearchParams(location.search);
+
+  function mk(tag, attrs, parent, text) {
+    const e = document.createElementNS(NS, tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    if (text !== undefined) e.textContent = text;
+    parent.appendChild(e); return e;
+  }
+  const $ = id => document.getElementById(id);
+  const ease = x => x < 0 ? 0 : x > 1 ? 1 : x * x * (3 - 2 * x);
+  const clamp01 = x => Math.max(0, Math.min(1, x));
+  const lerp = (a, b, r) => a + (b - a) * r;
+  const win = (t, a, b, f = 0.3) => clamp01((t - a) / f) * (1 - clamp01((t - b) / f));
+
+  // ---------- geometry ----------
+  const E = { cx: 1035, cy: 400, rx: 185, ry: 255 };           // 山手線
+  const onE = deg => { const r = deg * Math.PI / 180; return [E.cx + E.rx * Math.cos(r), E.cy + E.ry * Math.sin(r)]; };
+  const N = {
+    tokorozawa: { x: 150, y: 230, kind: 'r', name: '所沢' },
+    ikebukuro: { p: onE(-125), kind: 'r', name: '池袋' },
+    hana: { x: 580, y: 487, kind: 'r', name: '花小金井' },
+    taka: { p: onE(160), kind: 'r', name: '高田馬場' },
+    tokyo: { p: onE(-20), kind: 'r', name: '東京/大手町' },
+    seven: { x: 720, y: 610, kind: 'h', name: 'セブンイレブン' },
+    kaetsu: { x: 580, y: 730, kind: 'h', name: '嘉悦大学' },
+    otemachi: { x: 1345, y: 440, kind: 'h', name: '大手町オフィス' },
+  };
+  for (const k in N) if (N[k].p) { N[k].x = Math.round(N[k].p[0]); N[k].y = Math.round(N[k].p[1]); }
+  N.taka.y = 487;   // align with 西武新宿線
+
+  const map = $('map');
+  // segments
+  const yam = mk('ellipse', { cx: E.cx, cy: E.cy, rx: E.rx, ry: E.ry, fill: 'none', stroke: C.yama, 'stroke-width': 8 }, map);
+  mk('polyline', { points: `${N.tokorozawa.x},${N.tokorozawa.y} ${N.ikebukuro.x},${N.ikebukuro.y}`, fill: 'none', stroke: C.seibu, 'stroke-width': 8 }, map);
+  mk('polyline', { points: `${N.tokorozawa.x},${N.tokorozawa.y} ${N.tokorozawa.x},487 ${N.taka.x},487`, fill: 'none', stroke: C.seibu, 'stroke-width': 8, 'stroke-linejoin': 'round' }, map);
+  mk('polyline', { points: `${N.hana.x},${N.hana.y} ${N.hana.x},${N.kaetsu.y}`, fill: 'none', stroke: C.lan, 'stroke-width': 6 }, map);
+  mk('polyline', { points: `${N.hana.x},${N.seven.y} ${N.seven.x},${N.seven.y}`, fill: 'none', stroke: C.lan, 'stroke-width': 6 }, map);
+  mk('polyline', { points: `${N.tokyo.x},${N.tokyo.y} ${N.otemachi.x},${N.tokyo.y} ${N.otemachi.x},${N.otemachi.y}`, fill: 'none', stroke: C.lan, 'stroke-width': 6 }, map);
+  // 東西線 (extended a bit beyond 高田馬場)
+  const tz0 = [N.taka.x - (N.tokyo.x - N.taka.x) * 0.35, N.taka.y - (N.tokyo.y - N.taka.y) * 0.35];
+  const tozai = mk('line', { x1: tz0[0], y1: tz0[1], x2: N.tokyo.x, y2: N.tokyo.y, stroke: C.tozai, 'stroke-width': 8 }, map);
+
+  // segment labels
+  function segLabel(x, y, l1, l2, col, anchor = 'middle') {
+    mk('text', { x, y, 'text-anchor': anchor, 'font-size': 18, 'font-weight': 700, fill: col }, map, l1);
+    mk('text', { x, y: y + 22, 'text-anchor': anchor, 'font-size': 16, fill: '#6b6560' }, map, l2);
+  }
+  segLabel(520, 180, '西武池袋線セグメント', '192.168.1.0/24', '#a88900');
+  segLabel(360, 525, '西武新宿線セグメント', '192.168.0.0/26', '#a88900');
+  segLabel(660, 700, '花小金井 徒歩圏LAN', '192.168.10.0/24', '#6b6560', 'start');
+  segLabel(E.cx, E.cy + E.ry + 30, 'JR山手線セグメント', '172.25.0.0/27', C.yama);
+  segLabel(1100, 455, '東西線セグメント', '10.0.5.0/25', C.tozai);
+  segLabel(N.otemachi.x, N.otemachi.y + 78, '大手町LAN', '10.1.0.0/24', '#6b6560');
+
+  // glows (behind nodes)
+  const glows = {};
+  for (const k in N) {
+    const n = N[k], w = n.kind === 'r' ? 124 : 144;
+    glows[k] = mk('rect', { x: n.x - w / 2, y: n.y - 36, width: w, height: 72, rx: 12, fill: '#f2b28f', opacity: 0, filter: 'url(#glow)' }, map);
+  }
+  // nodes
+  for (const k in N) {
+    const n = N[k];
+    if (n.kind === 'r') {
+      mk('rect', { x: n.x - 58, y: n.y - 28, width: 116, height: 56, rx: 6, fill: '#9c2f1f', stroke: '#6d1f14', 'stroke-width': 2 }, map);
+      mk('text', { x: n.x, y: n.y - 6, 'text-anchor': 'middle', 'font-size': 14, fill: '#f6dcd4' }, map, 'ルータ');
+      mk('text', { x: n.x, y: n.y + 17, 'text-anchor': 'middle', 'font-size': n.name.length > 5 ? 16 : 19, 'font-weight': 700, fill: '#fff' }, map, n.name);
+    } else {
+      mk('rect', { x: n.x - 68, y: n.y - 28, width: 136, height: 56, rx: 6, fill: '#ef6a3a', stroke: '#b8441c', 'stroke-width': 2 }, map);
+      mk('text', { x: n.x, y: n.y - 6, 'text-anchor': 'middle', 'font-size': 14, fill: '#fde3d8' }, map, 'ホスト');
+      mk('text', { x: n.x, y: n.y + 17, 'text-anchor': 'middle', 'font-size': 18, 'font-weight': 700, fill: '#fff' }, map, n.name);
+    }
+  }
+  // IP tags
+  function tag(x, y, t, col) {
+    const w = t.length * 8.6 + 12;
+    mk('rect', { x: x - w / 2, y: y - 12, width: w, height: 22, rx: 4, fill: col, opacity: 0.18 }, map);
+    mk('text', { x, y: y + 4, 'text-anchor': 'middle', 'font-size': 14, fill: '#3a3a3a', 'font-family': 'Menlo, Consolas, monospace' }, map, t);
+  }
+  tag(270, 252, '192.168.1.17', C.seibu);   tag(85, 300, '192.168.0.22', C.seibu);
+  tag(N.ikebukuro.x - 110, N.ikebukuro.y + 30, '192.168.1.1', C.seibu); tag(N.ikebukuro.x, N.ikebukuro.y - 44, '172.25.0.13', C.yama);
+  tag(N.hana.x - 125, 470, '192.168.0.18', C.seibu); tag(N.hana.x - 62, 540, '192.168.10.1', C.lan);
+  tag(N.taka.x - 122, 470, '192.168.0.2', C.seibu); tag(N.taka.x - 20, 538, '172.25.0.15', C.yama); tag(N.taka.x + 105, 470, '10.0.5.3', C.tozai);
+  tag(N.tokyo.x, N.tokyo.y - 44, '172.25.0.1', C.yama); tag(N.tokyo.x - 100, N.tokyo.y + 44, '10.0.5.9', C.tozai); tag(1312, N.tokyo.y - 16, '10.1.0.1', C.lan);
+  tag(N.seven.x, N.seven.y + 42, '192.168.10.2', C.lan);
+  tag(N.kaetsu.x + 130, N.kaetsu.y + 10, '192.168.10.3', C.lan);
+  tag(N.otemachi.x, N.otemachi.y + 42, '10.1.0.20', C.lan);
+
+  // ---------- overlay: accident mark, routing-info pulses ----------
+  const ov = $('overlay');
+  const mid = [(N.taka.x + N.tokyo.x) / 2, (N.taka.y + N.tokyo.y) / 2];
+  const xMark = mk('g', { opacity: 0 }, ov);
+  mk('circle', { cx: 0, cy: 0, r: 34, fill: '#ffffff', stroke: '#c0261b', 'stroke-width': 5 }, xMark);
+  mk('path', { d: 'M-17 -17 L17 17 M17 -17 L-17 17', stroke: '#c0261b', 'stroke-width': 9, 'stroke-linecap': 'round' }, xMark);
+  const xLabel = mk('g', { opacity: 0 }, ov);
+  mk('rect', { x: mid[0] - 80, y: mid[1] - 84, width: 160, height: 36, rx: 18, fill: '#c0261b' }, xLabel);
+  mk('text', { x: mid[0], y: mid[1] - 59, 'text-anchor': 'middle', 'font-size': 20, 'font-weight': 700, fill: '#fff' }, xLabel, '東西線 不通！');
+  const pulses = [0, 1, 2].map(() => {
+    const g = mk('g', { opacity: 0 }, ov);
+    mk('rect', { x: -44, y: -14, width: 88, height: 28, rx: 14, fill: C.yama }, g);
+    mk('text', { x: 0, y: 6, 'text-anchor': 'middle', 'font-size': 15, 'font-weight': 700, fill: '#fff' }, g, '経路情報');
+    return g;
+  });
+
+  // ---------- routing table panel ----------
+  const P = { x: 22, y: 548, w: 478, rowH: 36 };
+  const panel = $('panel');
+  const pg = mk('g', { opacity: 0 }, panel);
+  mk('rect', { x: P.x, y: P.y, width: P.w, height: 238, rx: 12, fill: '#ffffff', stroke: '#c9c2b8', 'stroke-width': 2 }, pg);
+  const pTitle = mk('text', { x: P.x + 16, y: P.y + 32, 'font-size': 20, 'font-weight': 700, fill: '#3a3a3a' }, pg, '');
+  mk('text', { x: P.x + P.w - 16, y: P.y + 32, 'text-anchor': 'end', 'font-size': 16, fill: RED, 'font-weight': 700 }, pg, '宛先 10.1.0.20');
+  mk('text', { x: P.x + 16, y: P.y + 62, 'font-size': 15, fill: '#9a938b' }, pg, '行き先');
+  mk('text', { x: P.x + 222, y: P.y + 62, 'font-size': 15, fill: '#9a938b' }, pg, '次の乗り換え先');
+  mk('line', { x1: P.x + 10, y1: P.y + 70, x2: P.x + P.w - 10, y2: P.y + 70, stroke: '#e3ddd5', 'stroke-width': 2 }, pg);
+  const rows = [0, 1, 2, 3].map(i => {
+    const y = P.y + 76 + i * P.rowH;
+    const g = mk('g', {}, pg);
+    const bg = mk('rect', { x: P.x + 8, y, width: P.w - 16, height: P.rowH - 4, rx: 6, fill: '#ffffff' }, g);
+    const a = mk('text', { x: P.x + 16, y: y + 23, 'font-size': 17, fill: '#3a3a3a' }, g, '');
+    const b = mk('text', { x: P.x + 222, y: y + 23, 'font-size': 17, fill: '#3a3a3a' }, g, '');
+    const strike = mk('line', { x1: P.x + 220, y1: y + 17, x2: P.x + 440, y2: y + 17, stroke: '#c0261b', 'stroke-width': 3, opacity: 0 }, g);
+    const m = mk('text', { x: P.x + P.w - 18, y: y + 24, 'text-anchor': 'end', 'font-size': 20, 'font-weight': 700, fill: '#9a938b' }, g, '');
+    return { g, bg, a, b, m, strike };
+  });
+
+  const TBL = {
+    kaetsu: { title: '嘉悦大学（ホスト）の表', rows: [['192.168.10.0/24', '直結（徒歩圏LAN）'], ['0.0.0.0/0 デフォルト', '192.168.10.1 花小金井']] },
+    hana: { title: '花小金井のルーティングテーブル', rows: [['192.168.10.0/24', '直結（徒歩圏LAN）'], ['192.168.0.0/26', '直結（西武新宿線）'], ['0.0.0.0/0 デフォルト', '192.168.0.2 高田馬場']] },
+    taka: { title: '高田馬場のルーティングテーブル', rows: [['192.168.0.0/26', '直結（西武新宿線）'], ['172.25.0.0/27', '直結（山手線）'], ['10.0.5.0/25', '直結（東西線）'], ['10.1.0.0/24', '10.0.5.9 東京（東西線）']] },
+    tokyo: { title: '東京/大手町のルーティングテーブル', rows: [['10.0.5.0/25', '直結（東西線）'], ['172.25.0.0/27', '直結（山手線）'], ['10.1.0.0/24', '直結（大手町LAN）']] },
+  };
+  // panel windows: [router, show, hide, scanStart, step, hitRow, variant]
+  const PANELS = [
+    ['kaetsu', 1.2, 4.0, 1.7, 0.6, 1],
+    ['hana', 4.9, 8.3, 5.4, 0.55, 2],
+    ['taka', 10.5, 13.8, 10.9, 0.5, 3],
+    ['tokyo', 16.0, 18.8, 16.4, 0.5, 2],
+    ['taka', 25.0, 28.8, 99, 0, -1, 'update'],
+    ['taka', 31.4, 34.3, 31.7, 0.3, 3, 'new'],
+    ['tokyo', 38.0, 40.3, 38.3, 0.3, 2],
+  ];
+
+  function renderPanel(t) {
+    let cur = null;
+    for (const p of PANELS) if (t >= p[1] - 0.3 && t < p[2] + 0.3) cur = p;
+    if (!cur) { pg.setAttribute('opacity', 0); return null; }
+    const [key, a, b, s0, st, hit, variant] = cur;
+    pg.setAttribute('opacity', win(t, a, b));
+    const T = TBL[key];
+    pTitle.textContent = T.title;
+    rows.forEach((r, i) => {
+      const d = T.rows[i];
+      r.g.setAttribute('opacity', d ? 1 : 0);
+      if (!d) return;
+      r.a.textContent = d[0]; r.b.textContent = d[1];
+      let state = 'idle';
+      if (hit >= 0 && t >= s0 + i * st) state = i === hit ? 'hit' : (i < hit ? 'miss' : 'idle');
+      if (hit >= 0 && i > hit) state = 'idle';
+      let down = false, nextTxt = d[1], strikeO = 0, newHL = 0;
+      if (key === 'taka' && (variant === 'update' || variant === 'new')) {
+        if (i === 2) down = true;
+        if (i === 3) {
+          if (variant === 'update') {
+            strikeO = clamp01((t - 25.9) / 0.4) * (1 - clamp01((t - 26.9) / 0.2));
+            if (t >= 27.0) { nextTxt = '172.25.0.1 東京（山手線）'; newHL = 1; }
+          } else { nextTxt = '172.25.0.1 東京（山手線）'; }
+        }
+      }
+      r.b.textContent = down ? '直結（東西線）不通' : nextTxt;
+      r.strike.setAttribute('opacity', strikeO);
+      r.bg.setAttribute('fill', state === 'hit' ? '#fbd9c8' : (newHL ? '#fff2b3' : '#ffffff'));
+      const col = (state === 'miss' || down) ? '#b9b2aa' : '#3a3a3a';
+      r.a.setAttribute('fill', col); r.b.setAttribute('fill', down ? '#c0261b' : col);
+      r.a.setAttribute('font-weight', state === 'hit' ? 700 : 400);
+      r.b.setAttribute('font-weight', state === 'hit' || newHL ? 700 : 400);
+      r.m.textContent = state === 'hit' ? '✓' : (state === 'miss' ? '×' : '');
+      r.m.setAttribute('fill', state === 'hit' ? RED : '#b9b2aa');
+    });
+    return key;
+  }
+
+  // ---------- packet ----------
+  const pkt = mk('g', { opacity: 0 }, $('packet-layer'));
+  mk('rect', { x: -66, y: -16, width: 132, height: 32, rx: 6, fill: RED, stroke: '#ffffff', 'stroke-width': 2 }, pkt);
+  mk('rect', { x: -66, y: -16, width: 30, height: 32, rx: 6, fill: RED_D }, pkt);
+  mk('text', { x: -51, y: 5, 'text-anchor': 'middle', 'font-size': 12, 'font-weight': 700, fill: '#fff' }, pkt, 'IP');
+  mk('text', { x: 15, y: 6, 'text-anchor': 'middle', 'font-size': 15, 'font-weight': 700, fill: '#fff' }, pkt, '宛先10.1.0.20');
+
+  const park = k => [N[k].x, N[k].y - 50];
+  const arc = [];
+  for (let d = 160; d >= -20; d -= 6) { const p = onE(d); arc.push([p[0], p[1] - 0]); }
+  const LEGS = [
+    [3.0, 4.6, [park('kaetsu'), park('hana')]],
+    [8.3, 10.4, [park('hana'), park('taka')]],
+    [13.8, 15.9, [park('taka'), park('tokyo')]],
+    [18.8, 20.4, [park('tokyo'), [N.otemachi.x, N.tokyo.y - 50], park('otemachi')]],
+    [29.0, 31.3, [park('kaetsu'), park('hana'), park('taka')]],
+    [34.3, 37.8, [park('taka'), [N.taka.x, N.taka.y], ...arc, [N.tokyo.x, N.tokyo.y], park('tokyo')]],
+    [40.3, 41.8, [park('tokyo'), [N.otemachi.x, N.tokyo.y - 50], park('otemachi')]],
+  ];
+  LEGS.forEach(L => { const p = L[2]; L.lens = []; for (let i = 1; i < p.length; i++) L.lens.push(Math.hypot(p[i][0] - p[i - 1][0], p[i][1] - p[i - 1][1])); L.total = L.lens.reduce((a, b) => a + b, 0); });
+  function along(L, r) {
+    let d = L.total * r; const p = L[2];
+    for (let i = 0; i < L.lens.length; i++) { if (d <= L.lens[i]) { const q = d / L.lens[i]; return [lerp(p[i][0], p[i + 1][0], q), lerp(p[i][1], p[i + 1][1], q)]; } d -= L.lens[i]; }
+    return p[p.length - 1];
+  }
+  function packetPos(t) {
+    for (let i = 0; i < LEGS.length; i++) {
+      const L = LEGS[i];
+      if (t < L[0]) { return i === 0 || i === 4 ? L[2][0] : LEGS[i - 1][2][LEGS[i - 1][2].length - 1]; }
+      if (t <= L[1]) return along(L, ease((t - L[0]) / (L[1] - L[0])));
+      if (i === 3 && t < 22.5) return L[2][L[2].length - 1];
+    }
+    return LEGS[6][2][LEGS[6][2].length - 1];
+  }
+
+  // ---------- captions ----------
+  const STEPS = [
+    [0.0, '嘉悦大学から、大手町オフィス（10.1.0.20）へパケットを送る'],
+    [1.2, '① 嘉悦大学：宛先は別のネットワーク → デフォルトゲートウェイ（花小金井）へ'],
+    [4.9, '② 花小金井：当てはまる行がない → デフォルト（高田馬場）へ'],
+    [10.5, '③ 高田馬場：10.1.0.0/24 は「東西線で東京へ」'],
+    [16.0, '④ 東京：大手町LANは直結 → そのまま届ける'],
+    [20.4, '到着！ 各駅は「次の乗り換え先」だけを決める（バケツリレー）'],
+    [22.5, '⑤ 東西線が止まった！'],
+    [25.0, '⑥ ルーティングプロトコルで経路情報が届き、高田馬場の表が書き換わる'],
+    [29.0, '⑦ 花小金井までは同じ。高田馬場では新しい表で「山手線で東京へ」'],
+    [34.3, '⑧ 山手線を回って東京へ（遠回りでも届く）'],
+    [38.0, '⑨ 東京：大手町LANに届ける'],
+    [41.8, '到着！ 経路が自動で切り替わった ＝ 動的ルーティング'],
+  ];
+  const cap = $('caption');
+  mk('rect', { x: 30, y: 806, width: 1380, height: 64, rx: 32, fill: '#f1eee9' }, cap);
+  const capT = mk('text', { x: 720, y: 848, 'text-anchor': 'middle', 'font-size': 27, 'font-weight': 700, fill: '#3a3a3a' }, cap, '');
+  const stepAt = t => { let s = 0; STEPS.forEach((x, i) => { if (t >= x[0]) s = i; }); return s; };
+
+  // ---------- render(t) ----------
+  window.render = function (t) {
+    t = ((t % DUR) + DUR) % DUR;
+    const fadeIn = clamp01(t / 0.5), fadeOut = 1 - clamp01((t - 45.0) / 0.8);
+    const accident = t >= 22.5;
+
+    // scene chip
+    $('scene-chip-t').textContent = accident ? '東西線ストップ' : '通常時';
+    $('scene-chip-bg').setAttribute('fill', accident ? '#c0261b' : RED);
+    $('scene-chip-bg').setAttribute('width', accident ? 190 : 160);
+    $('scene-chip-t').setAttribute('x', accident ? 95 : 80);
+    $('scene-chip').setAttribute('transform', `translate(${accident ? 1220 : 1250},62)`);
+
+    // 東西線 status
+    const brk = clamp01((t - 22.8) / 0.6) * (accident ? 1 : 0);
+    tozai.setAttribute('stroke', brk > 0.5 ? '#b9c9d3' : C.tozai);
+    tozai.setAttribute('stroke-dasharray', brk > 0.5 ? '14 12' : 'none');
+    const xs = 0.4 + 0.6 * ease(brk);
+    xMark.setAttribute('transform', `translate(${mid[0]},${mid[1]}) scale(${xs})`);
+    xMark.setAttribute('opacity', brk * fadeOut);
+    xLabel.setAttribute('opacity', win(t, 23.2, 28.5));
+
+    // routing info pulses: 東京 -> 高田馬場 along 山手線 (reverse of the arc)
+    pulses.forEach((g, i) => {
+      const a = 25.0 + i * 0.35, b = a + 1.4;
+      const on = t >= a && t <= b + 0.2;
+      g.setAttribute('opacity', on ? win(t, a, b, 0.15) : 0);
+      if (on) {
+        const r = ease((t - a) / (b - a));
+        const idx = (arc.length - 1) * (1 - r), i0 = Math.floor(idx), i1 = Math.min(arc.length - 1, i0 + 1);
+        const q = idx - i0;
+        g.setAttribute('transform', `translate(${lerp(arc[i0][0], arc[i1][0], q)},${lerp(arc[i0][1], arc[i1][1], q)})`);
+      }
+    });
+
+    const key = renderPanel(t);
+    for (const k in glows) glows[k].setAttribute('opacity', 0);
+    if (key) glows[key].setAttribute('opacity', 0.9 * pg.getAttribute('opacity'));
+    // arrival glow
+    const arr = Math.max(win(t, 20.4, 22.2), win(t, 41.8, 44.8));
+    if (arr > 0) glows.otemachi.setAttribute('opacity', 0.95 * arr);
+
+    // packet
+    const pos = packetPos(t);
+    let po = fadeIn * fadeOut;
+    if (t > 21.6 && t < 22.5) po *= 1 - clamp01((t - 21.6) / 0.5);   // leave scene 1
+    if (t >= 22.5) po *= clamp01((t - 22.5) / 0.5);
+    pkt.setAttribute('transform', `translate(${pos[0]},${pos[1]})`);
+    pkt.setAttribute('opacity', po);
+
+    // caption
+    const s = stepAt(t);
+    capT.textContent = STEPS[s][1];
+    capT.setAttribute('opacity', clamp01((t - STEPS[s][0]) / 0.3) * fadeOut + (t < 0.3 ? 1 : 0));
+    capT.setAttribute('fill', /到着/.test(STEPS[s][1]) ? RED : (s >= 6 && s <= 7 ? '#c0261b' : '#3a3a3a'));
+    return s;
+  };
+  window.DURATION = DUR;
+
+  // ---------- playback & controls ----------
+  if (params.has('static')) {
+    document.getElementById('ctrl').classList.add('hide');
+    render(parseFloat(params.get('t') || '0'));
+    return;
+  }
+  if (params.has('clean')) document.getElementById('ctrl').classList.add('hide');
+  let playing = true, tNow = 0, last = performance.now();
+  const info = $('b-info'), bPlay = $('b-play');
+  function setPlay(p) { playing = p; bPlay.textContent = p ? '一時停止' : '再生'; }
+  function jump(dir) {
+    const s = stepAt(tNow % DUR);
+    const target = dir > 0 ? (s + 1) % STEPS.length : (tNow % DUR - STEPS[s][0] > 0.8 ? s : (s - 1 + STEPS.length) % STEPS.length);
+    tNow = STEPS[target][0] + 0.01;
+  }
+  $('b-prev').onclick = () => jump(-1);
+  $('b-next').onclick = () => jump(1);
+  bPlay.onclick = () => setPlay(!playing);
+  document.addEventListener('keydown', e => {
+    if (e.key === ' ') { setPlay(!playing); e.preventDefault(); }
+    if (e.key === 'ArrowRight') jump(1);
+    if (e.key === 'ArrowLeft') jump(-1);
+  });
+  (function loop(now) {
+    if (playing) tNow += (now - last) / 1000;
+    last = now;
+    const s = render(tNow);
+    info.textContent = `ステップ ${s + 1}/${STEPS.length}　（スペース：再生/停止、←→：ステップ移動）`;
+    requestAnimationFrame(loop);
+  })(last);
+})();
+</script>
+</body>
+</html>

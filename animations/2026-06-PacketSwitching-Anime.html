@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>パケット交換アニメーション</title>
+<style>
+  html, body { margin: 0; background: #ffffff; }
+  body { display: flex; justify-content: center; align-items: center; min-height: 100vh; }
+  svg { width: 100vw; max-width: 1440px; height: auto; display: block;
+        font-family: "Noto Sans CJK JP", "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif; }
+</style>
+</head>
+<body>
+<svg id="stage" viewBox="0 0 1440 900" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="8" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <g id="pc">
+      <rect x="-56" y="-46" width="112" height="76" rx="8" fill="#5c5852"/>
+      <rect x="-48" y="-38" width="96" height="60" rx="4" fill="#eef2f6"/>
+      <rect x="-10" y="30" width="20" height="14" fill="#5c5852"/>
+      <rect x="-34" y="44" width="68" height="8" rx="3" fill="#5c5852"/>
+    </g>
+    <g id="router">
+      <circle r="44" fill="#696464"/>
+      <g stroke="#ffffff" stroke-width="5" stroke-linecap="round" fill="none">
+        <path d="M-24 -8 H-6 M-14 -16 L-6 -8 L-14 0"/>
+        <path d="M24 8 H6 M14 0 L6 8 L14 16"/>
+        <path d="M8 -24 V-6 M0 -14 L8 -6 L16 -14" transform="rotate(180 8 -15)"/>
+        <path d="M-8 24 V6 M-16 14 L-8 6 L0 14" transform="rotate(180 -8 15)"/>
+      </g>
+    </g>
+  </defs>
+
+  <!-- title -->
+  <text x="720" y="70" text-anchor="middle" font-size="40" font-weight="700" fill="#3a3a3a">パケット交換：1本の回線を、複数の通信で分け合う</text>
+
+  <!-- links -->
+  <g id="links" stroke="#c9c2b8" stroke-width="10" stroke-linecap="round">
+    <line x1="230" y1="270" x2="480" y2="450"/>
+    <line x1="230" y1="630" x2="480" y2="450"/>
+    <line x1="960" y1="450" x2="1210" y2="270"/>
+    <line x1="960" y1="450" x2="1210" y2="630"/>
+  </g>
+  <rect id="shared-glow" x="463" y="433" width="514" height="34" rx="17" fill="#f2b28f" opacity="0" filter="url(#glow)"/>
+  <line x1="480" y1="450" x2="960" y2="450" stroke="#a89f94" stroke-width="18" stroke-linecap="round"/>
+  <text x="720" y="508" text-anchor="middle" font-size="24" fill="#6b6560">共有区間（1本の回線）</text>
+
+  <!-- nodes -->
+  <use href="#pc" x="150" y="270"/><text x="150" y="350" text-anchor="middle" font-size="26" font-weight="700" fill="#D34817">A</text>
+  <use href="#pc" x="150" y="630"/><text x="150" y="710" text-anchor="middle" font-size="26" font-weight="700" fill="#2F639C">B</text>
+  <use href="#pc" x="1290" y="270"/><text x="1290" y="350" text-anchor="middle" font-size="26" font-weight="700" fill="#D34817">C</text>
+  <use href="#pc" x="1290" y="630"/><text x="1290" y="710" text-anchor="middle" font-size="26" font-weight="700" fill="#2F639C">D</text>
+  <text x="150" y="160" text-anchor="middle" font-size="20" fill="#6b6560">送信元</text>
+  <text x="1290" y="160" text-anchor="middle" font-size="20" fill="#6b6560">受信先</text>
+
+  <circle id="r2-glow" cx="960" cy="450" r="62" fill="#f2b28f" opacity="0" filter="url(#glow)"/>
+  <use href="#router" x="480" y="450"/>
+  <use href="#router" x="960" y="450"/>
+  <text x="480" y="390" text-anchor="middle" font-size="22" fill="#6b6560">ルータ R1</text>
+  <text x="960" y="390" text-anchor="middle" font-size="22" fill="#6b6560">ルータ R2</text>
+
+  <!-- R2 callout -->
+  <g id="r2-callout" opacity="0">
+    <rect x="690" y="532" width="300" height="44" rx="22" fill="#3a3a3a"/>
+    <text x="840" y="562" text-anchor="middle" font-size="21" fill="#ffffff">ヘッダの宛先を見て振り分け</text>
+  </g>
+
+  <!-- data blocks (whole data before split / after reassembly) -->
+  <g id="data-layer"></g>
+  <!-- packets -->
+  <g id="packet-layer"></g>
+
+  <!-- step captions -->
+  <g id="steps" font-size="26"></g>
+</svg>
+
+<script>
+(function () {
+  const NS = 'http://www.w3.org/2000/svg';
+  const RED = '#D34817', BLUE = '#2F639C';
+  const RED_D = '#8f2f0e', BLUE_D = '#1b3d63';
+  const DUR = 14;                       // loop length (s)
+  const PW = 46, PH = 32;               // packet size
+
+  // ---------- geometry ----------
+  const flows = [
+    { color: RED, dark: RED_D, src: [150, 270], dst: [1290, 270],
+      path: [[230, 270], [480, 450], [960, 450], [1210, 270]], t0: 3.0 },
+    { color: BLUE, dark: BLUE_D, src: [150, 630], dst: [1290, 630],
+      path: [[230, 630], [480, 450], [960, 450], [1210, 630]], t0: 3.35 },
+  ];
+  const GAP = 0.7, SPEED = 300;         // departure gap (s), px/s
+
+  function segLens(p) { const l = []; for (let i = 1; i < p.length; i++) l.push(Math.hypot(p[i][0] - p[i-1][0], p[i][1] - p[i-1][1])); return l; }
+  flows.forEach(f => { f.lens = segLens(f.path); f.total = f.lens.reduce((a, b) => a + b, 0); });
+  function along(f, d) {
+    for (let i = 0; i < f.lens.length; i++) {
+      if (d <= f.lens[i]) { const r = d / f.lens[i]; const a = f.path[i], b = f.path[i+1]; return [a[0] + (b[0]-a[0]) * r, a[1] + (b[1]-a[1]) * r]; }
+      d -= f.lens[i];
+    }
+    return f.path[f.path.length - 1];
+  }
+  const ease = x => x < 0 ? 0 : x > 1 ? 1 : x * x * (3 - 2 * x);
+  const clamp01 = x => Math.max(0, Math.min(1, x));
+  const lerp = (a, b, r) => a + (b - a) * r;
+
+  // queue slots beside a PC (4 slots, stacked 2x2)
+  function slot(base, i, side) {
+    const dx = side === 'out' ? 105 : -105;
+    const col = side === 'out' ? (i % 2) : (i % 2) - 1;   // read 1 2 / 3 4 left to right on both sides
+    return [base[0] + dx + col * (PW + 8), base[1] - 22 + Math.floor(i / 2) * (PH + 10)];
+  }
+
+  // ---------- build elements ----------
+  const pl = document.getElementById('packet-layer');
+  const dl = document.getElementById('data-layer');
+  function mk(tag, attrs, parent) { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); (parent || pl).appendChild(e); return e; }
+
+  flows.forEach(f => {
+    f.packets = [];
+    for (let i = 0; i < 4; i++) {
+      const g = mk('g', {});
+      mk('rect', { x: -PW/2, y: -PH/2, width: PW, height: PH, rx: 6, fill: f.color }, g);
+      mk('rect', { x: -PW/2, y: -PH/2, width: 13, height: PH, rx: 6, fill: f.dark }, g);
+      mk('rect', { x: -PW/2 + 7, y: -PH/2, width: 6, height: PH, fill: f.dark }, g);
+      const t = mk('text', { x: 6, y: 9, 'text-anchor': 'middle', 'font-size': 22, 'font-weight': 700, fill: '#fff' }, g);
+      t.textContent = i + 1;
+      f.packets.push(g);
+    }
+    // data blocks
+    f.dataSrc = mk('g', {}, dl);
+    mk('rect', { x: -56, y: -32, width: 112, height: 64, rx: 8, fill: f.color }, f.dataSrc);
+    let t = mk('text', { x: 0, y: 9, 'text-anchor': 'middle', 'font-size': 24, 'font-weight': 700, fill: '#fff' }, f.dataSrc); t.textContent = 'データ';
+    f.dataDst = f.dataSrc.cloneNode(true); dl.appendChild(f.dataDst);
+  });
+
+  // step captions
+  const steps = ['① 分割', '② 回線を共有（多重化）', '③ 宛先で振り分け', '④ 順番どおりに再構成'];
+  const stepWin = [[0.8, 3.0], [3.0, 7.0], [7.0, 9.6], [9.6, 12.4]];
+  const stepsG = document.getElementById('steps');
+  const stepEls = steps.map((s, i) => {
+    const w = [170, 330, 270, 330][i];
+    const x = [140, 350, 720, 1030][i];
+    const g = mk('g', { transform: `translate(${x},800)` }, stepsG);
+    const r = mk('rect', { x: 0, y: -34, width: w, height: 52, rx: 26 }, g);
+    const t = mk('text', { x: w / 2, y: 1, 'text-anchor': 'middle' }, g); t.textContent = s;
+    return { r, t };
+  });
+  // arrows between steps
+  [[322, 340], [692, 708], [1002, 1018]].forEach(([a, b]) => mk('path', { d: `M${a} 774 L${b} 774 M${b - 7} 767 L${b} 774 L${b - 7} 781`, stroke: '#c9c2b8', 'stroke-width': 3, fill: 'none' }, stepsG));
+
+  // ---------- render(t) ----------
+  function setG(g, x, y, s, o) { g.setAttribute('transform', `translate(${x},${y}) scale(${s})`); g.setAttribute('opacity', o); }
+
+  window.render = function (t) {
+    t = ((t % DUR) + DUR) % DUR;
+    const fadeOut = 1 - clamp01((t - 13.0) / 0.7);     // end-of-loop fade
+    const fadeIn = clamp01(t / 0.5);
+
+    flows.forEach(f => {
+      // source data block: visible until split
+      const split = ease((t - 1.0) / 1.2);              // 1.0 -> 2.2 s
+      const srcPos = [f.src[0] + 105, f.src[1] - 0];
+      setG(f.dataSrc, srcPos[0], srcPos[1], 1 - 0.3 * split, (1 - split) * fadeIn + clamp01((t - 13.3) / 0.7));
+
+      f.packets.forEach((g, i) => {
+        const dep = f.t0 + i * GAP;
+        const travel = f.total / SPEED;
+        const arr = dep + travel;
+        const qs = slot(f.src, i, 'out');
+        let x, y, o = 1, s = 1;
+        if (t < dep) {
+          // appear from the data block into the outgoing queue
+          x = lerp(srcPos[0], qs[0], split); y = lerp(srcPos[1], qs[1], split);
+          o = split; s = 0.6 + 0.4 * split;
+          // step from queue to link start just before departure
+          const pre = ease((t - (dep - 0.35)) / 0.35);
+          x = lerp(x, f.path[0][0], pre); y = lerp(y, f.path[0][1], pre);
+        } else if (t < arr) {
+          [x, y] = along(f, (t - dep) * SPEED);
+        } else {
+          // dock into receiving slots, then merge into data
+          const ds = slot(f.dst, i, 'in');
+          const dock = ease((t - arr) / 0.35);
+          const end = f.path[f.path.length - 1];
+          x = lerp(end[0], ds[0], dock); y = lerp(end[1], ds[1], dock);
+          const merge = ease((t - 10.4) / 1.0);
+          const center = [f.dst[0] - 130, f.dst[1]];
+          x = lerp(x, center[0], merge); y = lerp(y, center[1], merge);
+          o = 1 - merge; s = 1 - 0.3 * merge;
+        }
+        setG(g, x, y, s, o * fadeOut);
+      });
+
+      const merged = ease((t - 10.9) / 0.6);
+      setG(f.dataDst, f.dst[0] - 130, f.dst[1], 0.8 + 0.2 * merged, merged * fadeOut);
+    });
+
+    // highlights
+    const shared = clamp01((t - 3.6) / 0.4) * (1 - clamp01((t - 7.0) / 0.4));
+    document.getElementById('shared-glow').setAttribute('opacity', 0.9 * shared);
+    const r2 = clamp01((t - 7.0) / 0.4) * (1 - clamp01((t - 9.6) / 0.4));
+    document.getElementById('r2-glow').setAttribute('opacity', 0.9 * r2);
+    document.getElementById('r2-callout').setAttribute('opacity', r2);
+
+    stepEls.forEach((e, i) => {
+      const [a, b] = stepWin[i];
+      const on = clamp01((t - a) / 0.3) * (1 - clamp01((t - b) / 0.3));
+      const done = t >= b && t < 13.0;
+      e.r.setAttribute('fill', on > 0.5 ? '#D34817' : (done ? '#f2e3db' : '#f1eee9'));
+      e.t.setAttribute('fill', on > 0.5 ? '#ffffff' : (done ? '#8f2f0e' : '#9a938b'));
+      e.t.setAttribute('font-weight', on > 0.5 ? 700 : 400);
+    });
+  };
+
+  window.DURATION = DUR;
+  if (!/[?&]static/.test(location.search)) {
+    const start = performance.now();
+    (function loop(now) { render((now - start) / 1000); requestAnimationFrame(loop); })(start);
+  } else {
+    render(0);
+  }
+})();
+</script>
+</body>
+</html>
