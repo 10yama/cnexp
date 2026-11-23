@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>DNS 再帰的名前解決アニメーション</title>
+<style>
+  html, body { margin: 0; background: #ffffff; }
+  body { display: flex; flex-direction: column; justify-content: center; align-items: center; min-height: 100vh; }
+  svg { width: 100vw; max-width: 1440px; height: auto; display: block;
+        font-family: "Noto Sans CJK JP", "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif; }
+  #ctrl { display: flex; gap: 8px; align-items: center; margin: 6px 0 10px;
+          font-family: "Hiragino Sans", "Meiryo", sans-serif; font-size: 14px; color: #6b6560; }
+  #ctrl button { font-size: 14px; padding: 4px 12px; border: 1px solid #c9c2b8; background: #f7f5f2;
+                 border-radius: 6px; cursor: pointer; color: #3a3a3a; }
+  #ctrl button:hover { background: #efe9e2; }
+  .hide { display: none !important; }
+</style>
+</head>
+<body>
+<svg id="stage" viewBox="0 0 1440 900" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="9" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <text x="40" y="62" font-size="38" font-weight="700" fill="#3a3a3a">再帰的名前解決 ― www.kaetsu.ac.jp のIPアドレスは？</text>
+  <text x="40" y="100" font-size="22" fill="#6b6560">DNSキャッシュサーバが、権威DNSサーバを上から順にたどって答えを探す</text>
+  <g id="scene-chip" transform="translate(1130,62)">
+    <rect id="scene-chip-bg" x="0" y="-30" width="280" height="44" rx="22" fill="#D34817"/>
+    <text id="scene-chip-t" x="140" y="0" text-anchor="middle" font-size="23" font-weight="700" fill="#fff"></text>
+  </g>
+  <g id="map"></g>
+  <g id="cache"></g>
+  <g id="bubbles"></g>
+  <g id="msgs"></g>
+  <g id="caption"></g>
+</svg>
+<div id="ctrl">
+  <button id="b-prev">◀ 前のステップ</button>
+  <button id="b-play">一時停止</button>
+  <button id="b-next">次のステップ ▶</button>
+  <span id="b-info"></span>
+</div>
+
+<script>
+(function () {
+  const NS = 'http://www.w3.org/2000/svg';
+  const RED = '#D34817';
+  const COL = { q: '#5f5a55', auth: '#d0451b', non: '#1a86c8' };
+  const MONO = 'Menlo, Consolas, "Courier New", monospace';
+  const DUR = 32;
+  const params = new URLSearchParams(location.search);
+
+  function mk(tag, attrs, parent, text) {
+    const e = document.createElementNS(NS, tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    if (text !== undefined) e.textContent = text;
+    parent.appendChild(e); return e;
+  }
+  const $ = id => document.getElementById(id);
+  const ease = x => x < 0 ? 0 : x > 1 ? 1 : x * x * (3 - 2 * x);
+  const clamp01 = x => Math.max(0, Math.min(1, x));
+  const lerp = (a, b, r) => a + (b - a) * r;
+  const win = (t, a, b, f = 0.3) => clamp01((t - a) / f) * (1 - clamp01((t - b) / f));
+
+  const map = $('map');
+  // legend
+  [['問い合わせ', COL.q], ['権威のある回答', COL.auth], ['権威のない回答', COL.non]].forEach(([l, c], i) => {
+    const x = 720 + i * 205;
+    mk('rect', { x, y: 118, width: 30, height: 16, rx: 8, fill: c }, map);
+    mk('text', { x: x + 38, y: 133, 'font-size': 18, fill: '#6b6560' }, map, l);
+  });
+
+  // ---------- nodes ----------
+  const N = {
+    app:   { x: 190, y: 228, w: 270, h: 66, fill: '#2e9d4a', sub: 'ブラウザなど', name: 'アプリ' },
+    stub:  { x: 190, y: 398, w: 270, h: 74, fill: '#1f6fb2', sub: 'OSの中', name: 'スタブレゾルバ' },
+    stubB: { x: 190, y: 680, w: 270, h: 74, fill: '#1f6fb2', sub: 'OSの中', name: 'スタブレゾルバ' },
+    cache: { x: 750, y: 398, w: 300, h: 90, fill: '#6b4fa0', sub: '172.20.1.21（学内）', name: 'DNSキャッシュサーバ' },
+    root:  { x: 1250, y: 222, w: 280, h: 74, fill: '#9c2f1f', sub: '202.12.27.33', name: 'ルートDNSサーバ' },
+    jp:    { x: 1250, y: 420, w: 280, h: 74, fill: '#9c2f1f', sub: '203.119.1.1', name: 'jp DNSサーバ' },
+    kae:   { x: 1250, y: 618, w: 280, h: 74, fill: '#9c2f1f', sub: '202.209.24.65', name: 'kaetsu.ac.jp DNSサーバ' },
+  };
+  mk('rect', { x: 30, y: 150, width: 320, height: 300, rx: 14, fill: '#f7f5f2', stroke: '#c9c2b8', 'stroke-width': 2 }, map);
+  mk('text', { x: 46, y: 180, 'font-size': 18, 'font-weight': 700, fill: '#6b6560' }, map, 'クライアント（嘉悦大学のPC）');
+  mk('rect', { x: 30, y: 600, width: 320, height: 135, rx: 14, fill: '#f7f5f2', stroke: '#c9c2b8', 'stroke-width': 2 }, map);
+  mk('text', { x: 46, y: 628, 'font-size': 17, fill: '#9a938b' }, map, '隣の学生のPC');
+  mk('line', { x1: 190, y1: 262, x2: 190, y2: 360, stroke: '#c9c2b8', 'stroke-width': 4 }, map);
+  mk('rect', { x: 1095, y: 172, width: 310, height: 600, rx: 16, fill: 'none', stroke: '#d9a08b', 'stroke-width': 2, 'stroke-dasharray': '8 6' }, map);
+  mk('text', { x: 1405, y: 164, 'text-anchor': 'end', 'font-size': 17, 'font-weight': 700, fill: '#9c2f1f' }, map, '権威DNSサーバ（自分の担当範囲だけ知っている）');
+
+  const port = {
+    stubR: [N.stub.x + 135, N.stub.y], stubBR: [N.stubB.x + 135, N.stubB.y],
+    cacheL: [N.cache.x - 150, N.cache.y - 12], cacheLB: [N.cache.x - 150, N.cache.y + 30], cacheR: [N.cache.x + 150, N.cache.y],
+    root: [N.root.x - 140, N.root.y], jp: [N.jp.x - 140, N.jp.y], kae: [N.kae.x - 140, N.kae.y],
+    appB: [N.app.x, N.app.y + 33], stubT: [N.stub.x, N.stub.y - 37],
+  };
+  const bPath = [port.stubBR, [420, N.stubB.y], [420, port.cacheLB[1]], port.cacheLB];
+  const line = (pts) => mk('polyline', { points: pts.map(p => p.join(',')).join(' '), fill: 'none', stroke: '#e3ddd5', 'stroke-width': 6, 'stroke-linejoin': 'round' }, map);
+  line([port.stubR, [port.cacheL[0], port.stubR[1]]]); line(bPath);
+  line([port.cacheR, port.root]); line([port.cacheR, port.jp]); line([port.cacheR, port.kae]);
+  mk('text', { x: 462, y: 352, 'text-anchor': 'middle', 'font-size': 19, 'font-weight': 700, fill: '#6b4fa0' }, map, '再帰問い合わせ');
+  mk('text', { x: 462, y: 376, 'text-anchor': 'middle', 'font-size': 15, fill: '#6b6560' }, map, '「最後まで調べてきて」');
+  mk('text', { x: 860, y: 312, 'text-anchor': 'middle', 'font-size': 19, 'font-weight': 700, fill: '#9c2f1f' }, map, '反復問い合わせ →');
+  mk('text', { x: 860, y: 336, 'text-anchor': 'middle', 'font-size': 15, fill: '#6b6560' }, map, '順番に聞いて回る');
+
+  const glows = {};
+  for (const k in N) {
+    const n = N[k];
+    glows[k] = mk('rect', { x: n.x - n.w / 2 - 6, y: n.y - n.h / 2 - 6, width: n.w + 12, height: n.h + 12, rx: 12, fill: '#f2b28f', opacity: 0, filter: 'url(#glow)' }, map);
+  }
+  for (const k in N) {
+    const n = N[k];
+    mk('rect', { x: n.x - n.w / 2, y: n.y - n.h / 2, width: n.w, height: n.h, rx: 8, fill: n.fill }, map);
+    mk('text', { x: n.x, y: n.y - 6, 'text-anchor': 'middle', 'font-size': n.name.length > 12 ? 21 : 23, 'font-weight': 700, fill: '#fff' }, map, n.name);
+    mk('text', { x: n.x, y: n.y + 23, 'text-anchor': 'middle', 'font-size': 17, fill: '#ffffffdd', 'font-family': /\d/.test(n.sub) ? MONO : 'inherit' }, map, n.sub);
+  }
+
+  // ---------- cache panel ----------
+  const cg = $('cache');
+  const CP = { x: 468, y: 470, w: 486, rowH: 52 };
+  mk('rect', { x: CP.x, y: CP.y, width: CP.w, height: 300, rx: 10, fill: '#ffffff', stroke: '#b9a8d6', 'stroke-width': 2 }, cg);
+  mk('text', { x: CP.x + 14, y: CP.y + 28, 'font-size': 19, 'font-weight': 700, fill: '#6b4fa0' }, cg, 'キャッシュ（覚えている答え）');
+  [['名前', 14], ['種類', 212], ['値', 258]].forEach(([h, dx]) => mk('text', { x: CP.x + dx, y: CP.y + 52, 'font-size': 14, fill: '#9a938b' }, cg, h));
+  const CROWS = [
+    ['.', 'NS', 'm.root-servers.net.', '(202.12.27.33) など13系統', 'pre'],
+    ['jp.', 'NS', 'a.dns.jp.', '(203.119.1.1)', 9.2],
+    ['kaetsu.ac.jp.', 'NS', 'ns1.kaetsu.ac.jp.', '(202.209.24.65)', 12.8],
+    ['www.kaetsu.ac.jp.', 'A', '219.94.159.32', '', 16.2],
+  ];
+  const crow = CROWS.map((r, i) => {
+    const y = CP.y + 60 + i * CP.rowH;
+    const g = mk('g', {}, cg);
+    const bg = mk('rect', { x: CP.x + 8, y, width: CP.w - 16, height: CP.rowH - 4, rx: 5, fill: '#ffffff' }, g);
+    const a = mk('text', { x: CP.x + 14, y: y + 22, 'font-size': 18, fill: '#3a3a3a', 'font-family': MONO }, g, r[0]);
+    const ty = mk('text', { x: CP.x + 212, y: y + 22, 'font-size': 18, 'font-weight': 700, fill: r[1] === 'A' ? '#1a86c8' : '#9c2f1f', 'font-family': MONO }, g, r[1]);
+    const b = mk('text', { x: CP.x + 258, y: y + 22, 'font-size': 18, fill: '#3a3a3a', 'font-family': MONO }, g, r[2]);
+    const c = mk('text', { x: CP.x + 258, y: y + 42, 'font-size': 15, fill: '#6b6560', 'font-family': MONO }, g, r[3]);
+    return { g, bg, a, b };
+  });
+  mk('text', { x: CP.x + 14, y: CP.y + 290, 'font-size': 14, fill: '#9a938b' }, cg, 'NS＝担当のDNSサーバ名（ ）内はそのIP、A＝IPv4アドレス');
+
+  // ---------- speech bubbles (below each authoritative server) ----------
+  const bub = $('bubbles');
+  function bubble(k, lines) {
+    const n = N[k], g = mk('g', { opacity: 0 }, bub);
+    const x = n.x - 140, y = n.y + n.h / 2 + 12, w = 280, h = 14 + lines.length * 22;
+    mk('rect', { x, y, width: w, height: h, rx: 10, fill: '#fff4ee', stroke: COL.auth, 'stroke-width': 2 }, g);
+    mk('path', { d: `M${n.x - 12} ${y} L${n.x} ${y - 12} L${n.x + 12} ${y}`, fill: '#fff4ee', stroke: COL.auth, 'stroke-width': 2 }, g);
+    lines.forEach((l, i) => mk('text', { x: x + 12, y: y + 26 + i * 22, 'font-size': 17, fill: '#3a3a3a' }, g, l));
+    return g;
+  }
+  const BUB = [
+    [bubble('root', ['jp. の担当（NS）は', 'a.dns.jp.（203.119.1.1）']), 7.6, 9.6],
+    [bubble('jp', ['ac.jp. も私の担当。', 'kaetsu.ac.jp. の NS は', 'ns1.kaetsu.ac.jp.', '（202.209.24.65）']), 11.4, 13.4],
+    [bubble('kae', ['www.kaetsu.ac.jp. の A は', '219.94.159.32 だよ！']), 14.8, 16.8],
+  ];
+
+  // ---------- messages ----------
+  const mg = $('msgs');
+  const off = (p, dy) => [p[0], p[1] + dy];
+  const Q = 'www.kaetsu.ac.jp の A は？';
+  const MSG = [
+    [1.6, 2.8, [port.appB, port.stubT], '①', Q, 'q'],
+    [3.3, 4.9, [port.stubR, [port.cacheL[0], port.stubR[1]]], '②', Q, 'q'],
+    [6.0, 7.4, [off(port.cacheR, -12), off(port.root, -12)], '③', Q, 'q'],
+    [7.8, 9.2, [off(port.root, 12), off(port.cacheR, 12)], '④', 'NS: a.dns.jp.', 'auth'],
+    [9.6, 11.0, [off(port.cacheR, -12), off(port.jp, -12)], '⑤', Q, 'q'],
+    [11.4, 12.8, [off(port.jp, 12), off(port.cacheR, 12)], '⑥', 'NS: ns1.kaetsu.ac.jp.', 'auth'],
+    [13.2, 14.6, [off(port.cacheR, -12), off(port.kae, -12)], '⑦', Q, 'q'],
+    [14.8, 16.2, [off(port.kae, 12), off(port.cacheR, 12)], '⑧', 'A: 219.94.159.32', 'auth'],
+    [16.6, 18.2, [[port.cacheL[0], port.stubR[1]], port.stubR], '⑨', 'A: 219.94.159.32', 'non'],
+    [18.4, 19.4, [port.stubT, port.appB], '⑩', 'A: 219.94.159.32', 'non'],
+    [22.2, 23.8, bPath, '②', Q, 'q'],
+    [25.4, 27.0, bPath.slice().reverse(), '⑨', 'A: 219.94.159.32', 'non'],
+  ];
+  function along(p, r) {
+    const Ls = []; for (let i = 1; i < p.length; i++) Ls.push(Math.hypot(p[i][0] - p[i - 1][0], p[i][1] - p[i - 1][1]));
+    let d = Ls.reduce((a, b) => a + b, 0) * r;
+    for (let i = 0; i < Ls.length; i++) { if (d <= Ls[i]) { const q = Ls[i] ? d / Ls[i] : 0; return [lerp(p[i][0], p[i + 1][0], q), lerp(p[i][1], p[i + 1][1], q)]; } d -= Ls[i]; }
+    return p[p.length - 1];
+  }
+  const pills = MSG.map(m => {
+    const g = mk('g', { opacity: 0 }, mg);
+    const w = [...m[4]].reduce((a, ch) => a + (ch.charCodeAt(0) > 255 ? 18 : 10.5), 0) + 58;
+    mk('rect', { x: -w / 2, y: -19, width: w, height: 38, rx: 19, fill: COL[m[5]], stroke: '#fff', 'stroke-width': 2 }, g);
+    mk('text', { x: -w / 2 + 20, y: 7, 'text-anchor': 'middle', 'font-size': 20, 'font-weight': 700, fill: '#fff' }, g, m[3]);
+    mk('text', { x: -w / 2 + 38, y: 7, 'font-size': 18, 'font-weight': 700, fill: '#fff' }, g, m[4]);
+    return g;
+  });
+
+  // ---------- captions ----------
+  const STEPS = [
+    [0.0, 'アプリが www.kaetsu.ac.jp のIPアドレス（Aレコード）を知りたい'],
+    [1.6, '① アプリが、OSのスタブレゾルバに「www.kaetsu.ac.jp の A は？」'],
+    [3.3, '② 設定されたDNSキャッシュサーバに「最後まで調べてきて」（再帰問い合わせ）'],
+    [5.0, 'キャッシュを見る → まだ知らない。ルートの場所だけは最初から知っている'],
+    [6.0, '③ まずルートDNSサーバに聞く'],
+    [7.8, '④ ルート：「jp. の担当（NS）は a.dns.jp.」→ 覚えておく'],
+    [9.6, '⑤ jp のDNSサーバに聞く'],
+    [11.4, '⑥ jp：「kaetsu.ac.jp. の担当（NS）は ns1.kaetsu.ac.jp.」→ 覚えておく'],
+    [13.2, '⑦ kaetsu.ac.jp のDNSサーバに聞く'],
+    [14.8, '⑧ 担当者が答える：「A は 219.94.159.32」＝ 権威のある回答'],
+    [16.6, '⑨⑩ クライアントへ返す（キャッシュサーバからの答えは「権威のない回答」）'],
+    [19.4, 'アプリは 219.94.159.32 に接続できる。答えはキャッシュに残る'],
+    [21.2, 'しばらくして、隣のPCも www.kaetsu.ac.jp を調べる'],
+    [24.0, 'キャッシュに A レコードがある → 外に聞かずにすぐ返す'],
+    [27.4, 'キャッシュのおかげで速く答えられ、権威DNSサーバの負担も減る'],
+  ];
+  const cap = $('caption');
+  mk('rect', { x: 20, y: 800, width: 1400, height: 72, rx: 36, fill: '#f1eee9' }, cap);
+  const capT = mk('text', { x: 720, y: 846, 'text-anchor': 'middle', 'font-size': 28, 'font-weight': 700, fill: '#3a3a3a' }, cap, '');
+  const stepAt = t => { let s = 0; STEPS.forEach((x, i) => { if (t >= x[0]) s = i; }); return s; };
+
+  // ---------- render ----------
+  window.render = function (t) {
+    t = ((t % DUR) + DUR) % DUR;
+    const fadeOut = 1 - clamp01((t - 31.2) / 0.6);
+    const scene2 = t >= 21.2;
+    $('scene-chip-t').textContent = scene2 ? '2回目：キャッシュあり' : '1回目：キャッシュなし';
+    $('scene-chip-bg').setAttribute('fill', scene2 ? '#6b4fa0' : RED);
+
+    MSG.forEach((m, i) => {
+      const [t0, t1, path] = m, g = pills[i];
+      const on = t >= t0 - 0.1 && t <= t1 + 0.5;
+      if (!on) { g.setAttribute('opacity', 0); return; }
+      const p = along(path, ease((t - t0) / (t1 - t0)));
+      g.setAttribute('transform', `translate(${p[0]},${p[1]})`);
+      g.setAttribute('opacity', clamp01((t - t0 + 0.1) / 0.25) * (1 - clamp01((t - t1 - 0.2) / 0.3)));
+    });
+    BUB.forEach(([g, a, b]) => g.setAttribute('opacity', win(t, a, b)));
+
+    crow.forEach((r, i) => {
+      const at = CROWS[i][4];
+      r.g.setAttribute('opacity', at === 'pre' ? 1 : clamp01((t - at) / 0.3));
+      let fill = '#ffffff';
+      if (at === 'pre') fill = '#f2f0f6';
+      else if (t >= at && t < at + 1.4) fill = '#fff2b3';
+      const hit = i === 3 && t >= 24.0 && t < 27.4;
+      if (hit) fill = '#fbd9c8';
+      r.bg.setAttribute('fill', fill);
+      r.a.setAttribute('font-weight', hit ? 700 : 400); r.b.setAttribute('font-weight', hit ? 700 : 400);
+    });
+
+    for (const k in glows) glows[k].setAttribute('opacity', 0);
+    const G = (k, a, b) => { const v = win(t, a, b); if (v > 0) glows[k].setAttribute('opacity', Math.max(+glows[k].getAttribute('opacity'), 0.9 * v)); };
+    G('app', 0.2, 1.6); G('cache', 5.0, 6.0); G('root', 7.3, 7.9); G('jp', 10.9, 11.5); G('kae', 14.5, 15.0);
+    G('app', 19.4, 21.0); G('stubB', 21.2, 22.2); G('cache', 24.0, 25.4); G('stubB', 27.0, 30.6);
+
+    const s = stepAt(t);
+    capT.textContent = STEPS[s][1];
+    capT.setAttribute('opacity', (clamp01((t - STEPS[s][0]) / 0.3) + (t < 0.3 ? 1 : 0)) * fadeOut);
+    capT.setAttribute('fill', s === 14 || s === 11 ? RED : '#3a3a3a');
+    return s;
+  };
+  window.DURATION = DUR;
+
+  if (params.has('static')) {
+    document.getElementById('ctrl').classList.add('hide');
+    render(parseFloat(params.get('t') || '0'));
+    return;
+  }
+  if (params.has('clean')) document.getElementById('ctrl').classList.add('hide');
+  let playing = true, tNow = 0, last = performance.now();
+  const info = $('b-info'), bPlay = $('b-play');
+  function setPlay(p) { playing = p; bPlay.textContent = p ? '一時停止' : '再生'; }
+  function jump(dir) {
+    const s = stepAt(tNow % DUR);
+    const target = dir > 0 ? (s + 1) % STEPS.length : (tNow % DUR - STEPS[s][0] > 0.8 ? s : (s - 1 + STEPS.length) % STEPS.length);
+    tNow = STEPS[target][0] + 0.01;
+  }
+  $('b-prev').onclick = () => jump(-1);
+  $('b-next').onclick = () => jump(1);
+  bPlay.onclick = () => setPlay(!playing);
+  document.addEventListener('keydown', e => {
+    if (e.key === ' ') { setPlay(!playing); e.preventDefault(); }
+    if (e.key === 'ArrowRight') jump(1);
+    if (e.key === 'ArrowLeft') jump(-1);
+  });
+  (function loop(now) {
+    if (playing) tNow += (now - last) / 1000;
+    last = now;
+    const s = render(tNow);
+    info.textContent = `ステップ ${s + 1}/${STEPS.length}　（スペース：再生/停止、←→：ステップ移動）`;
+    requestAnimationFrame(loop);
+  })(last);
+})();
+</script>
+</body>
+</html>

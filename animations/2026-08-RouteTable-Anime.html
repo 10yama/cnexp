@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>PCのルーティングテーブル検索アニメーション</title>
+<style>
+  html, body { margin: 0; background: #ffffff; }
+  body { display: flex; flex-direction: column; justify-content: center; align-items: center; min-height: 100vh; }
+  svg { width: 100vw; max-width: 1440px; height: auto; display: block;
+        font-family: "Noto Sans CJK JP", "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif; }
+  #ctrl { display: flex; gap: 8px; align-items: center; margin: 6px 0 10px;
+          font-family: "Hiragino Sans", "Meiryo", sans-serif; font-size: 14px; color: #6b6560; }
+  #ctrl button { font-size: 14px; padding: 4px 12px; border: 1px solid #c9c2b8; background: #f7f5f2;
+                 border-radius: 6px; cursor: pointer; color: #3a3a3a; }
+  #ctrl button:hover { background: #efe9e2; }
+  .hide { display: none !important; }
+</style>
+</head>
+<body>
+<svg id="stage" viewBox="0 0 1440 900" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="9" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <text x="40" y="62" font-size="36" font-weight="700" fill="#3a3a3a">PCは送り先をどう決める？　― ルートテーブルの検索</text>
+  <text x="40" y="100" font-size="20" fill="#6b6560">第7回の路線図の「嘉悦大学」付近を拡大　／　Windows 11 の route PRINT -4 の結果を使う</text>
+  <g id="scene-chip" transform="translate(1210,62)">
+    <rect id="scene-chip-bg" x="0" y="-30" width="200" height="44" rx="22" fill="#D34817"/>
+    <text id="scene-chip-t" x="100" y="0" text-anchor="middle" font-size="22" font-weight="700" fill="#fff"></text>
+  </g>
+
+  <g id="map"></g>
+  <g id="panel"></g>
+  <g id="calc"></g>
+  <g id="packet-layer"></g>
+  <g id="caption"></g>
+</svg>
+<div id="ctrl">
+  <button id="b-prev">◀ 前のステップ</button>
+  <button id="b-play">一時停止</button>
+  <button id="b-next">次のステップ ▶</button>
+  <span id="b-info"></span>
+</div>
+
+<script>
+(function () {
+  const NS = 'http://www.w3.org/2000/svg';
+  const RED = '#D34817', RED_D = '#8f2f0e';
+  const C = { seibu: '#d9b100', yama: '#2e9d4a', tozai: '#1a9ad6', lan: '#8a837b' };
+  const MONO = 'Menlo, Consolas, "Courier New", monospace';
+  const DUR = 36;
+  const params = new URLSearchParams(location.search);
+
+  function mk(tag, attrs, parent, text) {
+    const e = document.createElementNS(NS, tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    if (text !== undefined) e.textContent = text;
+    parent.appendChild(e); return e;
+  }
+  const $ = id => document.getElementById(id);
+  const ease = x => x < 0 ? 0 : x > 1 ? 1 : x * x * (3 - 2 * x);
+  const clamp01 = x => Math.max(0, Math.min(1, x));
+  const lerp = (a, b, r) => a + (b - a) * r;
+  const win = (t, a, b, f = 0.3) => clamp01((t - a) / f) * (1 - clamp01((t - b) / f));
+
+  // ---------- IPv4 helpers ----------
+  const ip2n = s => s.split('.').reduce((a, o) => a * 256 + (+o), 0);
+  const n2ip = n => [24, 16, 8, 0].map(s => Math.floor(n / 2 ** s) % 256).join('.');
+  const and = (a, b) => n2ip(ip2n(a).toString(2).padStart(32, '0').split('').map((c, i) => c === '1' && ip2n(b).toString(2).padStart(32, '0')[i] === '1' ? 1 : 0).reduce((x, y) => x * 2 + y, 0));
+  const plen = m => ip2n(m).toString(2).replace(/0/g, '').length;
+
+  // ---------- map (zoomed area around 嘉悦大学) ----------
+  const map = $('map');
+  // inset: whole 第7回 map, simplified
+  (function inset() {
+    const g = mk('g', { transform: 'translate(40,128)' }, map);
+    mk('rect', { x: 0, y: 0, width: 230, height: 150, rx: 8, fill: '#faf8f5', stroke: '#c9c2b8', 'stroke-width': 1.5 }, g);
+    mk('text', { x: 10, y: 20, 'font-size': 13, fill: '#9a938b' }, g, '第7回の路線図');
+    const s = 0.16, ox = 0, oy = 0;
+    const P = (x, y) => [ox + x * s, oy + y * s];
+    const [ex, ey] = P(1035, 400);
+    mk('ellipse', { cx: ex, cy: ey, rx: 185 * s, ry: 255 * s, fill: 'none', stroke: C.yama, 'stroke-width': 2.5 }, g);
+    const a = P(150, 230), b = P(150, 487), c = P(860, 487), d = P(930, 190), h = P(580, 487), k = P(580, 730), v = P(720, 610);
+    mk('polyline', { points: `${a} ${d}`, fill: 'none', stroke: C.seibu, 'stroke-width': 2.5 }, g);
+    mk('polyline', { points: `${a} ${b} ${c}`, fill: 'none', stroke: C.seibu, 'stroke-width': 2.5 }, g);
+    mk('polyline', { points: `${h} ${k}`, fill: 'none', stroke: C.lan, 'stroke-width': 2 }, g);
+    mk('polyline', { points: `${h[0]},${v[1]} ${v}`, fill: 'none', stroke: C.lan, 'stroke-width': 2 }, g);
+    mk('line', { x1: P(830, 520)[0], y1: P(830, 520)[1], x2: P(1180, 310)[0], y2: P(1180, 310)[1], stroke: C.tozai, 'stroke-width': 2.5 }, g);
+    mk('rect', { x: h[0] - 16, y: h[1] - 10, width: 46, height: 34, rx: 4, fill: 'none', stroke: RED, 'stroke-width': 2.5 }, g);
+    mk('line', { x1: h[0] + 30, y1: h[1] + 24, x2: 232, y2: 150, stroke: RED, 'stroke-width': 1.5, 'stroke-dasharray': '4 3' }, g);
+  })();
+
+  const N = {
+    hana:   { x: 300, y: 420, kind: 'r', name: '花小金井' },
+    kaetsu: { x: 160, y: 690, kind: 'h', name: '嘉悦大学のPC' },
+    seven:  { x: 440, y: 690, kind: 'h', name: 'セブンイレブン' },
+  };
+  const BUS = 560;
+  // uplink from 花小金井 to the rest (西武新宿線)
+  mk('line', { x1: N.hana.x, y1: N.hana.y - 28, x2: N.hana.x, y2: 318, stroke: C.seibu, 'stroke-width': 8 }, map);
+  mk('line', { x1: N.hana.x, y1: 318, x2: 560, y2: 318, stroke: C.seibu, 'stroke-width': 8, 'stroke-dasharray': '16 10' }, map);
+  mk('text', { x: 316, y: 300, 'font-size': 16, 'font-weight': 700, fill: '#a88900' }, map, '西武新宿線 → その先のネットワーク');
+  // LAN bus
+  mk('line', { x1: 70, y1: BUS, x2: 540, y2: BUS, stroke: C.lan, 'stroke-width': 7 }, map);
+  for (const k of ['hana', 'kaetsu', 'seven']) mk('line', { x1: N[k].x, y1: BUS, x2: N[k].x, y2: N[k].y + (k === 'hana' ? 28 : -30), stroke: C.lan, 'stroke-width': 6 }, map);
+  mk('text', { x: 72, y: BUS - 14, 'font-size': 17, 'font-weight': 700, fill: '#6b6560' }, map, '花小金井 徒歩圏LAN');
+  mk('text', { x: 196, y: BUS + 28, 'font-size': 16, fill: '#6b6560', 'font-family': MONO }, map, '192.168.10.0/24');
+
+  const glows = {};
+  for (const k in N) {
+    const n = N[k], w = n.kind === 'r' ? 124 : 172;
+    glows[k] = mk('rect', { x: n.x - w / 2, y: n.y - 38, width: w, height: 76, rx: 12, fill: '#f2b28f', opacity: 0, filter: 'url(#glow)' }, map);
+  }
+  for (const k in N) {
+    const n = N[k];
+    if (n.kind === 'r') {
+      mk('rect', { x: n.x - 58, y: n.y - 28, width: 116, height: 56, rx: 6, fill: '#9c2f1f', stroke: '#6d1f14', 'stroke-width': 2 }, map);
+      mk('text', { x: n.x, y: n.y - 6, 'text-anchor': 'middle', 'font-size': 14, fill: '#f6dcd4' }, map, 'ルータ');
+      mk('text', { x: n.x, y: n.y + 17, 'text-anchor': 'middle', 'font-size': 18, 'font-weight': 700, fill: '#fff' }, map, n.name);
+    } else {
+      mk('rect', { x: n.x - 80, y: n.y - 30, width: 160, height: 60, rx: 6, fill: '#ef6a3a', stroke: '#b8441c', 'stroke-width': 2 }, map);
+      mk('text', { x: n.x, y: n.y - 7, 'text-anchor': 'middle', 'font-size': 14, fill: '#fde3d8' }, map, 'ホスト');
+      mk('text', { x: n.x, y: n.y + 18, 'text-anchor': 'middle', 'font-size': 18, 'font-weight': 700, fill: '#fff' }, map, n.name);
+    }
+  }
+  function tag(x, y, t, col) {
+    const w = t.length * 8.6 + 14;
+    mk('rect', { x: x - w / 2, y: y - 12, width: w, height: 22, rx: 4, fill: col, opacity: 0.18 }, map);
+    mk('text', { x, y: y + 4, 'text-anchor': 'middle', 'font-size': 14, fill: '#3a3a3a', 'font-family': MONO }, map, t);
+  }
+  tag(N.hana.x + 100, 500, '192.168.10.1', C.lan);
+  tag(N.kaetsu.x, N.kaetsu.y + 46, '192.168.10.3', C.lan);
+  tag(N.seven.x, N.seven.y + 46, '192.168.10.2', C.lan);
+  mk('text', { x: N.kaetsu.x, y: N.kaetsu.y + 76, 'text-anchor': 'middle', 'font-size': 14, fill: '#6b6560' }, map, 'デフォルトGW: 192.168.10.1');
+
+  // ---------- routing table panel ----------
+  const ROUTES = [
+    ['0.0.0.0', '0.0.0.0', '192.168.10.1', '192.168.10.3', '25'],
+    ['127.0.0.0', '255.0.0.0', 'リンク上', '127.0.0.1', '331'],
+    ['127.0.0.1', '255.255.255.255', 'リンク上', '127.0.0.1', '331'],
+    ['127.255.255.255', '255.255.255.255', 'リンク上', '127.0.0.1', '331'],
+    ['192.168.10.0', '255.255.255.0', 'リンク上', '192.168.10.3', '281'],
+    ['192.168.10.3', '255.255.255.255', 'リンク上', '192.168.10.3', '281'],
+    ['192.168.10.255', '255.255.255.255', 'リンク上', '192.168.10.3', '281'],
+    ['224.0.0.0', '240.0.0.0', 'リンク上', '127.0.0.1', '331'],
+    ['224.0.0.0', '240.0.0.0', 'リンク上', '192.168.10.3', '281'],
+    ['255.255.255.255', '255.255.255.255', 'リンク上', '127.0.0.1', '331'],
+    ['255.255.255.255', '255.255.255.255', 'リンク上', '192.168.10.3', '281'],
+  ];
+  const T = { x: 590, y: 122, w: 830, rowH: 31 };
+  const COLX = [T.x + 18, T.x + 186, T.x + 354, T.x + 494, T.x + 640, T.x + 714, T.x + 790];
+  const panel = $('panel');
+  mk('rect', { x: T.x, y: T.y, width: T.w, height: 452, rx: 12, fill: '#ffffff', stroke: '#c9c2b8', 'stroke-width': 2 }, panel);
+  mk('rect', { x: T.x, y: T.y, width: T.w, height: 40, rx: 12, fill: '#2b2b2b' }, panel);
+  mk('rect', { x: T.x, y: T.y + 28, width: T.w, height: 12, fill: '#2b2b2b' }, panel);
+  mk('text', { x: T.x + 16, y: T.y + 27, 'font-size': 17, fill: '#e8e8e8', 'font-family': MONO }, panel, 'C:\\> route PRINT -4');
+  mk('text', { x: T.x + T.w - 16, y: T.y + 27, 'text-anchor': 'end', 'font-size': 15, fill: '#bdbdbd' }, panel, '嘉悦大学のPCのルートテーブル');
+  const destLbl = mk('text', { x: T.x + T.w - 16, y: T.y + 66, 'text-anchor': 'end', 'font-size': 18, 'font-weight': 700, fill: RED }, panel, '');
+  mk('text', { x: T.x + 16, y: T.y + 66, 'font-size': 16, fill: '#6b6560' }, panel, 'アクティブ ルート:');
+  ['ネットワーク宛先', 'ネットマスク', 'ゲートウェイ', 'インターフェイス', 'メトリック', '長さ', '一致?'].forEach((h, i) =>
+    mk('text', { x: COLX[i], y: T.y + 92, 'font-size': 14, fill: i >= 5 ? RED : '#9a938b', 'font-weight': i >= 5 ? 700 : 400 }, panel, h));
+  mk('line', { x1: T.x + 10, y1: T.y + 100, x2: T.x + T.w - 10, y2: T.y + 100, stroke: '#e3ddd5', 'stroke-width': 2 }, panel);
+  const rows = ROUTES.map((r, i) => {
+    const y = T.y + 104 + i * T.rowH;
+    const g = mk('g', {}, panel);
+    const bg = mk('rect', { x: T.x + 8, y, width: T.w - 16, height: T.rowH - 3, rx: 5, fill: '#ffffff', stroke: 'none', 'stroke-width': 2.5 }, g);
+    const cells = r.map((c, j) => mk('text', { x: COLX[j], y: y + 21, 'font-size': 16, fill: '#3a3a3a', 'font-family': MONO }, g, c));
+    const len = mk('text', { x: COLX[5], y: y + 21, 'font-size': 16, fill: '#9a938b', 'font-family': MONO }, g, '/' + plen(r[1]));
+    const m = mk('text', { x: COLX[6] + 18, y: y + 22, 'text-anchor': 'middle', 'font-size': 19, 'font-weight': 700, fill: '#9a938b' }, g, '');
+    return { g, bg, cells, len, m };
+  });
+
+  // ---------- calc box ----------
+  const calc = $('calc');
+  const cg = mk('g', { opacity: 0 }, calc);
+  mk('rect', { x: T.x, y: 592, width: T.w, height: 192, rx: 12, fill: '#faf8f5', stroke: '#c9c2b8', 'stroke-width': 2 }, cg);
+  const cT = mk('text', { x: T.x + 20, y: 626, 'font-size': 17, 'font-weight': 700, fill: '#6b6560' }, cg, '');
+  const cL = [0, 1, 2, 3].map(i => mk('text', { x: T.x + 20, y: 664 + i * 34, 'font-size': 20, fill: '#3a3a3a' }, cg, ''));
+
+  // ---------- packet ----------
+  const pkt = mk('g', { opacity: 0 }, $('packet-layer'));
+  mk('rect', { x: -78, y: -16, width: 156, height: 32, rx: 6, fill: RED, stroke: '#ffffff', 'stroke-width': 2 }, pkt);
+  mk('rect', { x: -78, y: -16, width: 30, height: 32, rx: 6, fill: RED_D }, pkt);
+  mk('text', { x: -63, y: 5, 'text-anchor': 'middle', 'font-size': 12, 'font-weight': 700, fill: '#fff' }, pkt, 'IP');
+  const pktT = mk('text', { x: 15, y: 6, 'text-anchor': 'middle', 'font-size': 15, 'font-weight': 700, fill: '#fff' }, pkt, '');
+
+  // ---------- scenes ----------
+  const park = k => [N[k].x, N[k].y - 58];
+  const SCENES = [
+    { dest: '192.168.10.2', who: 'セブンイレブン', chip: '宛先：同じLAN', t0: 0, s0: 2.2, st: 0.6, pick: 9.2, send: [12.2, 14.2],
+      path: [park('kaetsu'), [N.kaetsu.x, BUS], [N.seven.x, BUS], park('seven')], arrive: 'seven', end: 16.5 },
+    { dest: '10.1.0.20', who: '大手町オフィス', chip: '宛先：別のNW', t0: 16.5, s0: 18.2, st: 0.6, pick: 25.2, send: [28.2, 30.0],
+      path: [park('kaetsu'), [N.kaetsu.x, BUS], [N.hana.x, BUS], [N.hana.x + 0, N.hana.y + 58]], arrive: 'hana',
+      onward: [30.4, 31.8, [[N.hana.x, N.hana.y + 58], [N.hana.x, 318], [600, 318]]], end: DUR },
+  ];
+  SCENES.forEach(S => {
+    S.match = ROUTES.map(r => and(S.dest, r[1]) === r[0]);
+    let best = -1; S.match.forEach((m, i) => { if (m && (best < 0 || plen(ROUTES[i][1]) > plen(ROUTES[best][1]))) best = i; });
+    S.best = best;
+  });
+  function pathLen(p) { const L = []; for (let i = 1; i < p.length; i++) L.push(Math.hypot(p[i][0] - p[i - 1][0], p[i][1] - p[i - 1][1])); return L; }
+  function along(p, r) {
+    const L = pathLen(p); let d = L.reduce((a, b) => a + b, 0) * r;
+    for (let i = 0; i < L.length; i++) { if (d <= L[i]) { const q = d / L[i]; return [lerp(p[i][0], p[i + 1][0], q), lerp(p[i][1], p[i + 1][1], q)]; } d -= L[i]; }
+    return p[p.length - 1];
+  }
+
+  // ---------- captions ----------
+  const STEPS = [
+    [0.0, '嘉悦大学のPC（192.168.10.3）から、セブンイレブン（192.168.10.2）へ送る'],
+    [2.2, '① ルートテーブルを上から順に、全部の行と照らし合わせる'],
+    [9.2, '② 一致したのは /0 と /24 の2行 → 一番長い /24 を採用（最長一致）'],
+    [12.2, '③ ゲートウェイが「リンク上」＝同じLAN → 相手に直接届ける'],
+    [16.5, '今度は大手町オフィス（10.1.0.20）へ送る'],
+    [18.2, '④ 同じように全部の行と照らし合わせる'],
+    [25.2, '⑤ 一致したのはデフォルトルート（0.0.0.0/0）だけ → ゲートウェイは 192.168.10.1'],
+    [28.2, '⑥ デフォルトゲートウェイ（花小金井）に渡す。その先は花小金井の表で決まる'],
+    [32.2, 'PCの表は「リンク上（直結）」と「デフォルト」でほぼすべての宛先をさばける'],
+  ];
+  const cap = $('caption');
+  mk('rect', { x: 30, y: 806, width: 1380, height: 64, rx: 32, fill: '#f1eee9' }, cap);
+  const capT = mk('text', { x: 720, y: 848, 'text-anchor': 'middle', 'font-size': 26, 'font-weight': 700, fill: '#3a3a3a' }, cap, '');
+  const stepAt = t => { let s = 0; STEPS.forEach((x, i) => { if (t >= x[0]) s = i; }); return s; };
+
+  // ---------- render(t) ----------
+  window.render = function (t) {
+    t = ((t % DUR) + DUR) % DUR;
+    const S = t < SCENES[1].t0 ? SCENES[0] : SCENES[1];
+    const fadeOut = 1 - clamp01((t - 35.2) / 0.6);
+    const sceneFade = clamp01((t - S.t0) / 0.5) * (S === SCENES[0] ? 1 - clamp01((t - 15.8) / 0.6) : fadeOut);
+
+    $('scene-chip-t').textContent = S.chip;
+    destLbl.textContent = '宛先 ' + S.dest;
+    destLbl.setAttribute('opacity', sceneFade);
+
+    // rows
+    const cur = Math.floor((t - S.s0) / S.st);
+    const picked = t >= S.pick;
+    rows.forEach((r, i) => {
+      const done = t >= S.s0 + i * S.st + S.st * 0.55;
+      const active = cur === i && t < S.pick;
+      const m = S.match[i];
+      let fill = '#ffffff', txt = '#3a3a3a', mark = '', mcol = '#9a938b', bold = 400;
+      if (done) {
+        if (m) { fill = '#fff2b3'; mark = '✓'; mcol = '#2e7d32'; }
+        else { txt = '#b9b2aa'; mark = '×'; }
+      }
+      if (picked) {
+        if (i === S.best) { fill = '#fbd9c8'; txt = '#3a3a3a'; mark = '採用'; mcol = RED; bold = 700; }
+        else if (m) { fill = '#fff8d6'; }
+      }
+      r.bg.setAttribute('fill', fill);
+      r.bg.setAttribute('stroke', active ? RED : 'none');
+      r.cells.forEach(c => { c.setAttribute('fill', txt); c.setAttribute('font-weight', bold); });
+      r.len.setAttribute('fill', done && m ? RED : '#b9b2aa');
+      r.len.setAttribute('font-weight', done && m ? 700 : 400);
+      r.m.textContent = mark; r.m.setAttribute('fill', mcol);
+      r.m.setAttribute('font-size', mark === '採用' ? 16 : 19);
+    });
+
+    // calc box
+    cg.setAttribute('opacity', sceneFade * clamp01((t - S.s0 + 0.3) / 0.3));
+    if (t < S.pick) {
+      const i = Math.max(0, Math.min(ROUTES.length - 1, cur));
+      const r = ROUTES[i], res = and(S.dest, r[1]);
+      cT.textContent = `${i + 1}行目を調べ中：宛先とネットマスクの AND をとって、ネットワーク宛先と比べる`;
+      cL[0].textContent = `宛先 ${S.dest}  AND  ネットマスク ${r[1]}`;
+      cL[1].textContent = `　＝ ${res}`;
+      cL[2].textContent = S.match[i] ? `ネットワーク宛先 ${r[0]} と一致 ✓（候補 /${plen(r[1])}）` : `ネットワーク宛先 ${r[0]} と不一致 ×`;
+      cL[2].setAttribute('fill', S.match[i] ? '#2e7d32' : '#9a938b');
+      cL[3].textContent = '';
+    } else {
+      const cands = S.match.map((m, i) => m ? i : -1).filter(i => i >= 0);
+      const b = ROUTES[S.best];
+      cT.textContent = '結果：一致した行の中から、ネットマスクが一番長い行を選ぶ';
+      cL[0].textContent = '一致した行： ' + cands.map(i => `${ROUTES[i][0]}/${plen(ROUTES[i][1])}`).join(' ,  ');
+      cL[1].textContent = `採用： ${b[0]}/${plen(b[1])}　→ ゲートウェイ「${b[2]}」`;
+      cL[2].textContent = b[2] === 'リンク上' ? '→ 同じLANの相手なので、直接 ' + S.dest + ' に送る' : '→ 別のネットワークなので、ルータ ' + b[2] + ' に預ける';
+      cL[2].setAttribute('fill', RED);
+      cL[3].textContent = S.best === 0 ? '（デフォルトルート /0 は、どの宛先とも一致する「最後の手段」）' : '';
+    }
+    [cL[1]].forEach(e => e.setAttribute('font-weight', t >= S.pick ? 700 : 400));
+
+    // glows
+    for (const k in glows) glows[k].setAttribute('opacity', 0);
+    if (t >= S.s0 - 0.6 && t < S.send[0]) glows.kaetsu.setAttribute('opacity', 0.8 * sceneFade);
+    const arr = win(t, S.send[1], S.end - 0.4);
+    if (arr > 0) glows[S.arrive].setAttribute('opacity', 0.95 * arr);
+
+    // packet
+    pktT.textContent = '宛先' + S.dest;
+    let pos = park('kaetsu');
+    if (t >= S.send[0]) pos = along(S.path, ease((t - S.send[0]) / (S.send[1] - S.send[0])));
+    let po = clamp01((t - S.t0 - 0.6) / 0.5) * sceneFade;
+    if (S.onward && t >= S.onward[0]) {
+      pos = along(S.onward[2], ease((t - S.onward[0]) / (S.onward[1] - S.onward[0])));
+      po *= 1 - clamp01((t - S.onward[1] + 0.4) / 0.4);
+    }
+    pkt.setAttribute('transform', `translate(${pos[0]},${pos[1]})`);
+    pkt.setAttribute('opacity', po);
+
+    const s = stepAt(t);
+    capT.textContent = STEPS[s][1];
+    capT.setAttribute('opacity', (clamp01((t - STEPS[s][0]) / 0.3) + (t < 0.3 ? 1 : 0)) * fadeOut);
+    capT.setAttribute('fill', s === 8 ? RED : '#3a3a3a');
+    return s;
+  };
+  window.DURATION = DUR;
+
+  // ---------- playback & controls ----------
+  if (params.has('static')) {
+    document.getElementById('ctrl').classList.add('hide');
+    render(parseFloat(params.get('t') || '0'));
+    return;
+  }
+  if (params.has('clean')) document.getElementById('ctrl').classList.add('hide');
+  let playing = true, tNow = 0, last = performance.now();
+  const info = $('b-info'), bPlay = $('b-play');
+  function setPlay(p) { playing = p; bPlay.textContent = p ? '一時停止' : '再生'; }
+  function jump(dir) {
+    const s = stepAt(tNow % DUR);
+    const target = dir > 0 ? (s + 1) % STEPS.length : (tNow % DUR - STEPS[s][0] > 0.8 ? s : (s - 1 + STEPS.length) % STEPS.length);
+    tNow = STEPS[target][0] + 0.01;
+  }
+  $('b-prev').onclick = () => jump(-1);
+  $('b-next').onclick = () => jump(1);
+  bPlay.onclick = () => setPlay(!playing);
+  document.addEventListener('keydown', e => {
+    if (e.key === ' ') { setPlay(!playing); e.preventDefault(); }
+    if (e.key === 'ArrowRight') jump(1);
+    if (e.key === 'ArrowLeft') jump(-1);
+  });
+  (function loop(now) {
+    if (playing) tNow += (now - last) / 1000;
+    last = now;
+    const s = render(tNow);
+    info.textContent = `ステップ ${s + 1}/${STEPS.length}　（スペース：再生/停止、←→：ステップ移動）`;
+    requestAnimationFrame(loop);
+  })(last);
+})();
+</script>
+</body>
+</html>
